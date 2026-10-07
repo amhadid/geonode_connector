@@ -1,0 +1,176 @@
+/* ==========================================================
+   Dataset Browser Modern Styling (dataset.qss)
+   ========================================================== */
+
+QWidget {
+    background: #FFFFFF;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1E293B;
+}
+
+/* ----------------------------------------------------------
+   Search Bar
+---------------------------------------------------------- */
+QLineEdit#searchEdit {
+    background: #FFFFFF;
+    border: 1.5px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 9pt;
+    color: #1E293B;
+}
+
+QLineEdit#searchEdit:hover {
+    border-color: #CBD5E1;
+}
+
+QLineEdit#searchEdit:focus {
+    border: 1.5px solid #10B981;
+    background: #FFFFFF;
+}
+
+QPushButton#refreshButton {
+    background: #F8FAFC;
+    border: 1.5px solid #E2E8F0;
+    border-radius: 8px;
+    color: #475569;
+    font-size: 11pt;
+}
+
+QPushButton#refreshButton:hover {
+    background: #F1F5F9;
+    border-color: #CBD5E1;
+    color: #0F172A;
+}
+
+QPushButton#refreshButton:pressed {
+    background: #E2E8F0;
+}
+
+/* ----------------------------------------------------------
+   Table Widget Modern
+---------------------------------------------------------- */
+QTableWidget {
+    background: #FFFFFF;
+    alternate-background-color: #FAFAFB;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    gridline-color: transparent;
+    selection-background-color: #ECFDF5;
+    selection-color: #064E3B;
+}
+
+QHeaderView::section {
+    background: #F8FAFC;
+    color: #475569;
+    font-size: 8pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 2px solid #E2E8F0;
+}
+
+QTableWidget::item {
+    padding: 6px 10px;
+    border-bottom: 1px solid #F1F5F9;
+}
+
+QTableWidget::item:selected {
+    background-color: #ECFDF5;
+    color: #064E3B;
+}
+
+QTableWidget::item:hover {
+    background-color: #F8FAFC;
+}
+
+/* ----------------------------------------------------------
+   Checkbox
+---------------------------------------------------------- */
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1.5px solid #CBD5E1;
+    background: #FFFFFF;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #10B981;
+}
+
+QCheckBox::indicator:checked {
+    background: #10B981;
+    border-color: #10B981;
+    image: none;
+}
+
+/* ----------------------------------------------------------
+   Action Buttons
+---------------------------------------------------------- */
+QPushButton#importButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 7px;
+    padding: 10px 22px;
+    font-weight: 700;
+    font-size: 8.5pt;
+    letter-spacing: 0.3px;
+}
+
+QPushButton#importButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #34D399, stop:1 #10B981);
+}
+
+QPushButton#importButton:pressed {
+    background: #047857;
+}
+
+QPushButton#importButton:disabled {
+    background: #E2E8F0;
+    color: #94A3B8;
+}
+
+QPushButton#detailButton {
+    background: #FFFFFF;
+    color: #334155;
+    border: 1.5px solid #CBD5E1;
+    border-radius: 7px;
+    padding: 10px 18px;
+    font-weight: 600;
+    font-size: 8.5pt;
+}
+
+QPushButton#detailButton:hover {
+    border-color: #10B981;
+    color: #059669;
+    background: #F0FDF4;
+}
+
+QPushButton#detailButton:pressed {
+    background: #DCFCE7;
+}
+
+QPushButton#detailButton:disabled {
+    border-color: #E2E8F0;
+    color: #94A3B8;
+}
+
+QPushButton#refreshBottomButton {
+    background: #FFFFFF;
+    color: #334155;
+    border: 1.5px solid #CBD5E1;
+    border-radius: 7px;
+    padding: 10px 18px;
+    font-weight: 600;
+    font-size: 8.5pt;
+}
+
+QPushButton#refreshBottomButton:hover {
+    border-color: #10B981;
+    color: #059669;
+    background: #F0FDF4;
+}
