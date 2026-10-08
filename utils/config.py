@@ -148,13 +148,11 @@ DEFAULT_TOKEN_TYPE = "Bearer"
 # =============================================================================
 
 OAUTH_CLIENT_ID = os.getenv(
-    "OAUTH_CLIENT_ID",
-    "fkl0njOmuQeyDEtzR4Oq3b3iRAnVXwNYCUeHXbku"
+    "OAUTH_CLIENT_ID"
 )
 
 OAUTH_CLIENT_SECRET = os.getenv(
-    "OAUTH_CLIENT_SECRET",
-    "MWtM6EX1lBRi82MKzyvINIBxYYweYQjLunrLS9OxuFPPpDP36wvyundSK8MUejNcJIVGJDhq81bsNCEg6m658ahJDu3qQYhL87822K2i1JoBIiRMZ1elh3iWjbyUokOj"
+    "OAUTH_CLIENT_SECRET"
 )
 
 # =============================================================================
@@ -227,30 +225,30 @@ GEOSERVER_DEFAULT_WORKSPACE = "geonode"
 
 GEOSERVER_TIMEOUT = 60
 
-GEOSERVER_ADMIN_USER = os.getenv("GEOSERVER_ADMIN_USER", "admin")
+GEOSERVER_ADMIN_USER = os.getenv("GEOSERVER_ADMIN_USER")
 
-GEOSERVER_ADMIN_PASSWORD = os.getenv("GEOSERVER_ADMIN_PASSWORD", "WzL2i0Nfy7gossM")
+GEOSERVER_ADMIN_PASSWORD = os.getenv("GEOSERVER_ADMIN_PASSWORD")
 
 # =============================================================================
 # PostGIS Datastore Configuration (GeoNode backend)
 # =============================================================================
 
-POSTGIS_DEFAULT_HOST = os.getenv("POSTGIS_DEFAULT_HOST", "192.168.10.83")
-POSTGIS_DEFAULT_PORT = int(os.getenv("POSTGIS_DEFAULT_PORT", "5432"))
-POSTGIS_DEFAULT_DB = os.getenv("POSTGIS_DEFAULT_DB", "project_name_data")
-POSTGIS_DEFAULT_USER = os.getenv("POSTGIS_DEFAULT_USER", "project_name_data")
-POSTGIS_DEFAULT_PASSWORD = os.getenv("POSTGIS_DEFAULT_PASSWORD", "kNgo46mCu5jErcJ")
+POSTGIS_DEFAULT_HOST = os.getenv("POSTGIS_DEFAULT_HOST")
+POSTGIS_DEFAULT_PORT = int(os.getenv("POSTGIS_DEFAULT_PORT"))
+POSTGIS_DEFAULT_DB = os.getenv("POSTGIS_DEFAULT_DB")
+POSTGIS_DEFAULT_USER = os.getenv("POSTGIS_DEFAULT_USER")
+POSTGIS_DEFAULT_PASSWORD = os.getenv("POSTGIS_DEFAULT_PASSWORD")
 
 # Kredensial Superuser PostgreSQL Backend
-POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "yhK7USMSVAlUV47")
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 # Kredensial Basis Data Internal GeoNode (Metadata/Django Database)
-GEONODE_DATABASE = os.getenv("GEONODE_DATABASE", "project_name")
-GEONODE_DATABASE_USER = os.getenv("GEONODE_DATABASE_USER", "project_name")
-GEONODE_DATABASE_PASSWORD = os.getenv("GEONODE_DATABASE_PASSWORD", "JNOFc3PEBJriqvm")
-GEONODE_DATABASE_SCHEMA = os.getenv("GEONODE_DATABASE_SCHEMA", "public")
-GEONODE_GEODATABASE_SCHEMA = os.getenv("GEONODE_GEODATABASE_SCHEMA", "public")
+GEONODE_DATABASE = os.getenv("GEONODE_DATABASE")
+GEONODE_DATABASE_USER = os.getenv("GEONODE_DATABASE_USER")
+GEONODE_DATABASE_PASSWORD = os.getenv("GEONODE_DATABASE_PASSWORD")
+GEONODE_DATABASE_SCHEMA = os.getenv("GEONODE_DATABASE_SCHEMA")
+GEONODE_GEODATABASE_SCHEMA = os.getenv("GEONODE_GEODATABASE_SCHEMA")
 
 # =============================================================================
 # Upload Configuration
