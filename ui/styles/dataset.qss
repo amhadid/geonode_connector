@@ -134,6 +134,31 @@ QPushButton#importButton:disabled {
     color: #94A3B8;
 }
 
+QPushButton#importMenuButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 7px;
+    padding: 0px;
+    margin: 0px;
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-align: center;
+}
+
+QPushButton#importMenuButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #34D399, stop:1 #10B981);
+}
+
+QPushButton#importMenuButton:pressed {
+    background: #047857;
+}
+
+QPushButton#importMenuButton:disabled {
+    background: #E2E8F0;
+    color: #94A3B8;
+}
+
 QPushButton#detailButton {
     background: #FFFFFF;
     color: #334155;

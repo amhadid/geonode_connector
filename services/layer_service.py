@@ -57,20 +57,25 @@ class LayerService:
 
     def _load(
         self,
+        progress_callback: Optional[Any] = None,
+        force_reload: bool = False,
     ) -> list[Layer]:
         """
         Memuat dataset dari GeoNode apabila cache
-        belum tersedia.
+        belum tersedia atau dipaksa muat ulang.
         """
 
-        if not self._loaded:
+        if not self._loaded or force_reload:
 
             logger.info(
                 "Loading dataset cache..."
             )
 
             self._layers = (
-                self._dataset_api.get_datasets()
+                self._dataset_api.get_datasets(
+                    fetch_all=True,
+                    progress_callback=progress_callback,
+                )
             )
 
             self._loaded = True
@@ -148,6 +153,7 @@ class LayerService:
 
     def refresh(
         self,
+        progress_callback: Optional[Any] = None,
     ) -> list[Layer]:
         """
         Mengambil ulang dataset
@@ -159,7 +165,9 @@ class LayerService:
         )
 
         layers = (
-            self._dataset_api.refresh()
+            self._dataset_api.refresh(
+                progress_callback=progress_callback,
+            )
         )
 
         self._update_cache(
@@ -167,13 +175,15 @@ class LayerService:
         )
 
         logger.info(
-            "Dataset refreshed."
+            "Dataset refreshed (%s layer).",
+            len(self._layers),
         )
 
         return self._layers
 
     def get_all(
         self,
+        progress_callback: Optional[Any] = None,
     ) -> list[Layer]:
         """
         Mengambil seluruh dataset.
@@ -183,7 +193,7 @@ class LayerService:
         """
 
         return list(
-            self._load()
+            self._load(progress_callback=progress_callback)
         )
 
     def get(

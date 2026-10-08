@@ -13,7 +13,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from qgis.core import QgsApplication
-from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from qgis.PyQt.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -279,31 +279,31 @@ class DatasetWidget(QWidget):
         self.act_import_shp.triggered.connect(lambda: self._on_import_format("SHAPEFILE"))
         self.act_import_wms.triggered.connect(lambda: self._on_import_format("WMS"))
 
-        self.btn_import_menu = QPushButton("▾")
+        self.btn_import_menu = QPushButton("▼")
         self.btn_import_menu.setObjectName("importMenuButton")
         self.btn_import_menu.setToolTip("Pilih format import (WFS, GeoJSON, Shapefile, WMS)")
         self.btn_import_menu.setCursor(Qt.PointingHandCursor)
         self.btn_import_menu.setFixedSize(26, 34)
         self.btn_import_menu.setEnabled(False)
-        self.btn_import_menu.setMenu(self.import_menu)
+        self.btn_import_menu.clicked.connect(self._show_import_menu)
         self.btn_import_menu.setStyleSheet("""
-            QPushButton {
+            QPushButton#importMenuButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669);
                 color: white;
                 font-weight: bold;
                 border-radius: 6px;
                 border: none;
-                font-size: 9pt;
+                font-size: 7.5pt;
+                text-align: center;
+                padding: 0px;
+                margin: 0px;
             }
-            QPushButton:hover {
+            QPushButton#importMenuButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857);
             }
-            QPushButton:disabled {
+            QPushButton#importMenuButton:disabled {
                 background: #E2E8F0;
                 color: #94A3B8;
-            }
-            QPushButton::menu-indicator {
-                image: none;
             }
         """)
 
@@ -581,6 +581,12 @@ class DatasetWidget(QWidget):
                 self.importWmsRequested.emit(self._selected_pk)
             else:
                 self.importWfsRequested.emit(self._selected_pk)
+
+    def _show_import_menu(self):
+        """Menampilkan menu pilihan format import tepat di bawah tombol opsi."""
+        if hasattr(self, "import_menu") and self.import_menu:
+            pos = self.btn_import_menu.mapToGlobal(QPoint(0, self.btn_import_menu.height() + 2))
+            self.import_menu.exec_(pos)
 
     def _on_detail_clicked(self):
         if self._selected_pk:

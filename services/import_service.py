@@ -29,12 +29,19 @@ from qgis.core import (
     QgsRasterLayer,
     QgsVectorLayer,
     QgsMapLayer,
+    QgsFeatureRequest,
 )
 
 from ..models.layer import Layer
 from ..models.session import session
 from ..models.service_result import ServiceResult
-from ..utils.config import GEOSERVER_ADMIN_USER, GEOSERVER_ADMIN_PASSWORD
+from ..utils.config import (
+    GEOSERVER_ADMIN_USER,
+    GEOSERVER_ADMIN_PASSWORD,
+    PLUGIN_ROOT,
+    SHAPEFILE_CACHE_DIR,
+    GEOJSON_CACHE_DIR,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -65,7 +72,7 @@ class ImportService:
         Mengimpor layer sebagai WMS (Raster) ke dalam QGIS.
         """
         if not layer.has_wms:
-            server_url = self._session.server_url or "http://localhost"
+            server_url = self._session.server_url or "https://geonode-beta.jogjakota.go.id/"
             layer.wms_url = f"{server_url.rstrip('/')}/geoserver/ows"
 
         logger.info(f"Importing WMS Layer: {layer.display_name}")
@@ -97,11 +104,13 @@ class ImportService:
     def import_wfs(self, layer: Layer) -> ServiceResult:
         """
         Mengimpor layer sebagai WFS (Vector OWS) ke dalam QGIS.
-        Jika WFS provider gagal, otomatis fallback ke GeoJSON atau Shapefile.
+        Jika WFS provider gagal atau tidak menghasilkan fitur (misal akibat
+        bug XML character encoding pada GeoServer), otomatis fallback ke GeoJSON
+        atau Shapefile agar seluruh atribut dan fitur termuat lengkap.
         TIDAK AKAN jatuh ke WMS raster agar dataset tetap berupa vektor untuk analisis.
         """
         if not layer.has_wfs:
-            server_url = self._session.server_url or "http://localhost"
+            server_url = self._session.server_url or "https://geonode-beta.jogjakota.go.id"
             layer.wfs_url = f"{server_url.rstrip('/')}/geoserver/ows"
 
         # Tolak jika eksplisit raster
@@ -132,12 +141,49 @@ class ImportService:
                 alt_uri = self._build_wfs_uri(layer, typename_override=layer.name)
                 qgs_layer = QgsVectorLayer(alt_uri, layer.title or layer.name, "WFS")
 
-            # Jika WFS berhasil valid, pastikan readOnly bernilai False agar mode editing aktif
+            # Jika WFS berhasil valid, verifikasi apakah fiturnya benar-benar dapat dibaca
             if qgs_layer.isValid():
+                has_features = False
+                try:
+                    for _ in qgs_layer.getFeatures(QgsFeatureRequest().setLimit(1)):
+                        has_features = True
+                        break
+                except Exception as f_err:
+                    logger.warning(f"Error membaca fitur WFS untuk '{layer.display_name}': {f_err}")
+                    has_features = False
+
+                if has_features or qgs_layer.featureCount() > 0:
+                    qgs_layer.setReadOnly(False)
+                    return self._validate_and_add(qgs_layer, layer, format_desc="WFS Vector")
+
+                # Jika WFS valid namun mengembalikan 0 fitur padahal layer seharusnya memiliki data,
+                # hal ini terjadi pada layer dengan nama field bertanda baca khusus (misal / atau spasi)
+                # yang menyebabkan GeoServer gagal serialisasi XML GML (DOMException INVALID_CHARACTER_ERR).
+                logger.warning(
+                    f"WFS layer '{layer.display_name}' tidak menghasilkan fitur di QGIS "
+                    f"(terindikasi kendala XML character encoding GeoServer). "
+                    f"Melakukan fallback otomatis ke GeoJSON..."
+                )
+                geojson_res = self.import_geojson(layer)
+                if geojson_res.success:
+                    return geojson_res
+
+                # Fallback sekunder ke Shapefile
+                shp_res = self.import_shapefile(layer)
+                if shp_res.success:
+                    return shp_res
+
+                # Jika fallback juga tidak menghasilkan data (dataset memang kosong di server), gunakan WFS asli
                 qgs_layer.setReadOnly(False)
                 return self._validate_and_add(qgs_layer, layer, format_desc="WFS Vector")
 
-            # Jika WFS gagal, laporkan error yang sebenarnya agar user tidak terjebak layer read-only
+            # Jika WFS tidak valid sama sekali, coba fallback ke GeoJSON sebelum gagal
+            logger.warning(f"WFS tidak valid untuk '{layer.title}', mencoba fallback ke GeoJSON...")
+            geojson_res = self.import_geojson(layer)
+            if geojson_res.success:
+                return geojson_res
+
+            # Jika WFS gagal, laporkan error yang sebenarnya
             error_details = qgs_layer.error().summary() or "Server WFS tidak mengembalikan fitur yang valid atau kredensial ditolak."
             logger.error(f"Gagal memuat WFS layer '{layer.title}': {error_details}")
             return ServiceResult.fail(
@@ -145,7 +191,13 @@ class ImportService:
             )
 
         except Exception as e:
-            logger.exception("Gagal melakukan import WFS.")
+            logger.exception("Gagal melakukan import WFS. Mencoba fallback ke GeoJSON...")
+            try:
+                geojson_res = self.import_geojson(layer)
+                if geojson_res.success:
+                    return geojson_res
+            except Exception:
+                pass
             return ServiceResult.fail(
                 message=f"Terjadi kesalahan sistem saat import WFS: {str(e)}"
             )
@@ -154,23 +206,67 @@ class ImportService:
     # GeoJSON Import (Vector)
     # ==========================================================
 
-    def import_geojson(self, layer: Layer) -> ServiceResult:
+    def _create_geojson_layer(self, layer: Layer) -> Optional[QgsVectorLayer]:
         """
-        Mengimpor layer sebagai GeoJSON FeatureCollection ke dalam QGIS via OGR provider.
+        Membuat objek QgsVectorLayer GeoJSON dengan mengunduh ke direktori cache lokal
+        berbasis PLUGIN_ROOT (lintas OS).
         """
-        server_url = self._session.server_url or "http://localhost"
+        server_url = self._session.server_url or "https://geonode-beta.jogjakota.go.id"
         geojson_url = layer.get_geojson_url(server_url)
         geojson_url = self._inject_token_to_url(geojson_url)
 
-        logger.info(f"Importing GeoJSON Layer: {layer.display_name} ({geojson_url})")
+        cache_base = GEOJSON_CACHE_DIR
+        safe_name = "".join(c for c in (layer.name or "layer") if c.isalnum() or c in "_-")
+        layer_dir = os.path.join(cache_base, f"{safe_name}_{layer.pk or '0'}")
+        os.makedirs(layer_dir, exist_ok=True)
+        geojson_file = os.path.join(layer_dir, f"{safe_name}.geojson")
 
+        try:
+            req = urllib.request.Request(
+                geojson_url,
+                headers={"User-Agent": "QGIS-GeoNode-Connector"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp, open(geojson_file, "wb") as f_out:
+                f_out.write(resp.read())
+
+            qgs_layer = QgsVectorLayer(
+                geojson_file,
+                layer.title or layer.name,
+                "ogr"
+            )
+            if qgs_layer.isValid():
+                return qgs_layer
+        except Exception as exc:
+            logger.warning(f"Gagal mengunduh file GeoJSON lokal untuk '{layer.name}': {exc}")
+
+        # Fallback langsung via URL remote jika unduh file lokal terkendala
         try:
             qgs_layer = QgsVectorLayer(
                 geojson_url,
                 layer.title or layer.name,
                 "ogr"
             )
-            return self._validate_and_add(qgs_layer, layer, format_desc="GeoJSON Vector")
+            if qgs_layer.isValid():
+                return qgs_layer
+        except Exception as exc:
+            logger.warning(f"Gagal memuat remote GeoJSON untuk '{layer.name}': {exc}")
+
+        return None
+
+    def import_geojson(self, layer: Layer) -> ServiceResult:
+        """
+        Mengimpor layer sebagai GeoJSON FeatureCollection ke dalam QGIS via OGR provider.
+        """
+        logger.info(f"Importing GeoJSON Layer: {layer.display_name}")
+
+        try:
+            qgs_layer = self._create_geojson_layer(layer)
+            if qgs_layer and qgs_layer.isValid():
+                return self._validate_and_add(qgs_layer, layer, format_desc="GeoJSON Vector")
+
+            return ServiceResult.fail(
+                message=f"Gagal memuat GeoJSON untuk layer '{layer.title}'."
+            )
         except Exception as e:
             logger.exception("Gagal melakukan import GeoJSON.")
             return ServiceResult.fail(
@@ -183,19 +279,18 @@ class ImportService:
 
     def import_shapefile(self, layer: Layer) -> ServiceResult:
         """
-        Mengunduh Zipped Shapefile dari GeoServer, mengekstrak ke direktori cache lokal,
+        Mengunduh Zipped Shapefile dari GeoServer, mengekstrak ke direktori cache lokal
+        (menggunakan SHAPEFILE_CACHE_DIR berbasis PLUGIN_ROOT agar dinamis lintas OS),
         dan memuat file .shp ke dalam QGIS via OGR provider.
         """
-        server_url = self._session.server_url or "http://localhost"
+        server_url = self._session.server_url or "https://geonode-beta.jogjakota.go.id"
         shp_zip_url = layer.get_shapefile_url(server_url)
         shp_zip_url = self._inject_token_to_url(shp_zip_url)
 
         logger.info(f"Downloading & Importing Shapefile Layer: {layer.display_name}")
 
         try:
-            cache_base = os.path.expanduser(
-                "~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/cache/shapefiles"
-            )
+            cache_base = SHAPEFILE_CACHE_DIR
             safe_name = "".join(c for c in (layer.name or "layer") if c.isalnum() or c in "_-")
             layer_dir = os.path.join(cache_base, f"{safe_name}_{layer.pk or '0'}")
             os.makedirs(layer_dir, exist_ok=True)
@@ -240,7 +335,7 @@ class ImportService:
         """
         Merakit string URI untuk provider WMS QGIS.
         """
-        base_url = layer.wms_url or f"{(self._session.server_url or 'http://localhost').rstrip('/')}/geoserver/ows"
+        base_url = layer.wms_url or f"{(self._session.server_url or 'https://geonode-beta.jogjakota.go.id').rstrip('/')}/geoserver/ows"
         layer_name = layer.alternate or layer.qgis_layer_name  # {workspace}:{name}
 
         # Inject token if authenticated
@@ -269,7 +364,7 @@ class ImportService:
         Merakit string URI untuk provider WFS QGIS.
         Menggunakan typename='...' (standar provider WFS QGIS).
         """
-        raw_url = layer.wfs_url or f"{(self._session.server_url or 'http://localhost').rstrip('/')}/geoserver/ows"
+        raw_url = layer.wfs_url or f"{(self._session.server_url or 'https://geonode-beta.jogjakota.go.id').rstrip('/')}/geoserver/ows"
         # Bersihkan query parameter dari base URL WFS agar tidak merusak Basic Auth QGIS WFS
         parsed = urllib.parse.urlparse(raw_url)
         base_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
@@ -289,7 +384,7 @@ class ImportService:
         )
 
         # Gunakan kredensial admin GeoServer yang tepat agar transaksi WFS-T tidak ditolak 401
-        if "localhost" in base_url or "127.0.0.1" in base_url:
+        if "geonode-beta.jogjakota.go.id" in base_url or "127.0.0.1" in base_url:
             user = GEOSERVER_ADMIN_USER
             pwd = GEOSERVER_ADMIN_PASSWORD
         else:
@@ -344,6 +439,16 @@ class ImportService:
         # Pastikan layer vektor tidak dalam mode Read-Only agar dapat diedit di QGIS
         if isinstance(qgs_layer, QgsVectorLayer):
             qgs_layer.setReadOnly(False)
+            # Simpan metadata identitas GeoNode pada layer untuk sinkronisasi WFS-T presisi
+            if layer_model.pk:
+                qgs_layer.setCustomProperty("geonode_pk", str(layer_model.pk))
+            if layer_model.name:
+                qgs_layer.setCustomProperty("geonode_name", str(layer_model.name))
+            alt = layer_model.alternate or layer_model.qgis_layer_name
+            if alt:
+                qgs_layer.setCustomProperty("geonode_typename", str(alt))
+            if layer_model.title:
+                qgs_layer.setCustomProperty("geonode_title", str(layer_model.title))
 
         # Tambahkan layer ke Layer Tree (Map Canvas)
         self._project.addMapLayer(qgs_layer)

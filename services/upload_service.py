@@ -160,10 +160,12 @@ class UploadService:
             if progress_callback:
                 progress_callback(30, "Menyimpan data dan skema fitur ke basis data...")
 
-            # 2. Sinkronkan data fitur dan kolom baru ke PostGIS
-            pg_res = sync_service._sync_layer_to_postgis(layer)
-            if not pg_res.success:
-                return ServiceResult.fail(message=f"Gagal sinkronisasi data: {pg_res.message}")
+            # 2. Sinkronkan data fitur dan kolom baru (WFS-T HTTP atau PostGIS)
+            sync_res = sync_service.sync_layer(layer)
+            if not sync_res.success:
+                msg_lower = (sync_res.message or "").lower()
+                if "tidak ada perubahan" not in msg_lower:
+                    return ServiceResult.fail(message=f"Gagal sinkronisasi data: {sync_res.message}")
 
             if progress_callback:
                 progress_callback(65, "Menyimpan perubahan metadata ke GeoNode...")

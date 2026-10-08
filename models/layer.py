@@ -260,11 +260,11 @@ class Layer:
 
     @property
     def is_vector(self) -> bool:
-        return self.subtype.lower() == "vector"
+        return (self.subtype or "").lower() == "vector"
 
     @property
     def is_raster(self) -> bool:
-        return self.subtype.lower() == "raster"
+        return (self.subtype or "").lower() == "raster"
 
     @property
     def has_thumbnail(self) -> bool:

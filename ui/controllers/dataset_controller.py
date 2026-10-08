@@ -170,16 +170,25 @@ class DatasetController:
             "Loading dataset browser..."
         )
 
-        self._show_loading()
+        self._show_loading("Memuat dataset...")
+
+        def on_progress(layers_so_far: list[Layer], count: int, total: int):
+            self._populate(layers_so_far)
+            self._set_status(f"Memuat dataset ({count}/{total})...")
+            try:
+                from qgis.PyQt.QtCore import QCoreApplication
+                QCoreApplication.processEvents()
+            except Exception:
+                pass
 
         try:
 
             layers = (
-                self.layer_service.get_all()
+                self.layer_service.get_all(progress_callback=on_progress)
             )
 
             if not layers:
-                layers = self.layer_service.refresh()
+                layers = self.layer_service.refresh(progress_callback=on_progress)
 
             self._populate(
                 layers
@@ -218,10 +227,19 @@ class DatasetController:
             "Refreshing dataset..."
         )
 
+        def on_progress(layers_so_far: list[Layer], count: int, total: int):
+            self._populate(layers_so_far)
+            self._set_status(f"Refreshing dataset ({count}/{total})...")
+            try:
+                from qgis.PyQt.QtCore import QCoreApplication
+                QCoreApplication.processEvents()
+            except Exception:
+                pass
+
         try:
 
             layers = (
-                self.layer_service.refresh()
+                self.layer_service.refresh(progress_callback=on_progress)
             )
 
             self._populate(

@@ -451,9 +451,32 @@ class UploadWizardDialog(QDialog):
 
         # 2. Dataset yang ada
         try:
-            layers = self.layer_service.get_all() if hasattr(self.layer_service, "get_all") else getattr(self.layer_service, "layers", [])
-            if layers:
-                self._all_datasets = layers
+            # Gunakan cache dataset di memori jika sudah tersedia agar UI tidak membeku
+            cached_layers = getattr(self.layer_service, "_layers", [])
+            if not cached_layers:
+                # Jika cache memori masih kosong, muat halaman pertama saja (cepat, tanpa timeout ratusan dataset)
+                cached_layers = self.layer_service._dataset_api.get_datasets(page=1, page_size=100, fetch_all=False)
+                if cached_layers:
+                    self.layer_service._update_cache(cached_layers)
+
+            # Jika layer aktif memiliki PK atau nama spesifik, pastikan ada dalam opsi
+            target_ds = None
+            if self.layer:
+                layer_pk = self.layer.customProperty("geonode_pk")
+                if not layer_pk:
+                    m_path = re.search(r"[\\/]([^\\/]+)_(\d+)[\\/]", self.layer.source())
+                    if m_path:
+                        layer_pk = m_path.group(2)
+
+                if layer_pk:
+                    target_ds = self.layer_service.get(layer_pk)
+
+            layers_to_show = list(cached_layers)
+            if target_ds and target_ds not in layers_to_show:
+                layers_to_show.insert(0, target_ds)
+
+            if layers_to_show:
+                self._all_datasets = layers_to_show
                 self.cmb_existing_datasets.clear()
                 for ds in self._all_datasets:
                     self.cmb_existing_datasets.addItem(f"{ds.display_name} ({ds.name})", ds)
@@ -472,9 +495,19 @@ class UploadWizardDialog(QDialog):
 
         # Cek apakah layer ini cocok dengan dataset yang ada di GeoNode
         clean_layer_name = "".join(c for c in name.lower() if c.isalnum() or c == "_")
+        layer_pk = self.layer.customProperty("geonode_pk")
+        if not layer_pk:
+            m_path = re.search(r"[\\/]([^\\/]+)_(\d+)[\\/]", self.layer.source())
+            if m_path:
+                layer_pk = m_path.group(2)
+
         for i in range(self.cmb_existing_datasets.count()):
             ds = self.cmb_existing_datasets.itemData(i)
-            if ds and (ds.name.lower() == clean_layer_name or ds.title.lower() == name.lower()):
+            if not ds:
+                continue
+            if (layer_pk and str(ds.pk) == str(layer_pk)) or (
+                ds.name.lower() == clean_layer_name or ds.title.lower() == name.lower()
+            ):
                 self.cmb_existing_datasets.setCurrentIndex(i)
                 self.radio_update.setChecked(True)
                 return

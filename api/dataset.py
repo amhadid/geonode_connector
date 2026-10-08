@@ -32,6 +32,8 @@ from ..utils.config import (
     DATASET_ENDPOINT,
     DEFAULT_SERVER,
     DEFAULT_TIMEOUT,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
 )
 
 from ..utils.logger import get_logger
@@ -654,64 +656,138 @@ class DatasetAPI:
     def get_datasets(
         self,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = MAX_PAGE_SIZE,
         search: str | None = None,
         owner: str | None = None,
         subtype: str | None = None,
         resource_type: str | None = None,
+        fetch_all: bool = True,
+        progress_callback: Any | None = None,
     ) -> list[Layer]:
         """
-        Retrieve dataset list.
+        Retrieve dataset list from GeoNode with pagination support.
+
+        Parameters
+        ----------
+        page : int
+            Starting page number (default 1).
+        page_size : int
+            Items per page (default MAX_PAGE_SIZE = 100).
+        search : str | None
+            Keyword search filter.
+        owner : str | None
+            Dataset owner filter.
+        subtype : str | None
+            Geometry subtype filter.
+        resource_type : str | None
+            Resource type filter.
+        fetch_all : bool
+            If True, automatically traverses all remaining pages to fetch all datasets.
+            If False, only fetches the single page specified.
+        progress_callback : callable | None
+            Optional progress callback: callback(all_layers, loaded_count, total_count).
         """
 
+        actual_page_size = min(page_size, MAX_PAGE_SIZE)
         params: dict[str, Any] = {
-
             "page": page,
-
-            "page_size": page_size,
+            "page_size": actual_page_size,
         }
 
         if search:
-
             params["search"] = search
 
         if owner:
-
             params["owner"] = owner
 
         if subtype:
-
             params["subtype"] = subtype
 
         if resource_type:
-
             params["resource_type"] = resource_type
 
         logger.info(
-            "Loading datasets..."
+            "Loading datasets (page=%s, page_size=%s, fetch_all=%s)...",
+            page,
+            actual_page_size,
+            fetch_all,
         )
 
-        response = self._get(
-            DATASET_ENDPOINT,
-            params=params,
-        )
+        all_layers: list[Layer] = []
+        current_page = page
 
-        items = (
-            response.get("datasets")
-            or response.get("resources")
-            or response.get("results")
-            or response.get("items")
-            or []
-        )
+        while True:
+            params["page"] = current_page
+            try:
+                response = self._get(
+                    DATASET_ENDPOINT,
+                    params=params,
+                )
+            except Exception as exc:
+                if all_layers:
+                    logger.warning(
+                        "Pagination interrupted on page %s: %s. Returning %d dataset(s) loaded so far.",
+                        current_page,
+                        exc,
+                        len(all_layers),
+                    )
+                    break
+                raise
+
+            items = (
+                response.get("datasets")
+                or response.get("resources")
+                or response.get("results")
+                or response.get("items")
+                or []
+            )
+
+            if not items:
+                logger.debug(
+                    "No dataset items returned on page %s.",
+                    current_page,
+                )
+                break
+
+            layers = self._map_layers(items)
+            all_layers.extend(layers)
+
+            total = response.get("total")
+            if total is None:
+                total = len(all_layers)
+
+            logger.info(
+                "Page %d: loaded %d dataset(s) (accumulated: %d/%d).",
+                current_page,
+                len(layers),
+                len(all_layers),
+                total,
+            )
+
+            if progress_callback:
+                try:
+                    progress_callback(all_layers, len(all_layers), total)
+                except Exception as cb_exc:
+                    logger.debug("progress_callback exception: %s", cb_exc)
+
+            if not fetch_all:
+                break
+
+            links = response.get("links")
+            next_url = links.get("next") if isinstance(links, dict) else None
+
+            if not next_url or len(all_layers) >= total:
+                break
+
+            current_page += 1
 
         logger.info(
-            "Loaded %s dataset(s).",
-            len(items),
+            "Loaded %d dataset(s) total across %d page(s).",
+            len(all_layers),
+            current_page - page + 1,
         )
 
-        return self._map_layers(
-            items
-        )
+        return all_layers
 
     def get_dataset(
         self,
@@ -730,12 +806,13 @@ class DatasetAPI:
         )
 
         if not response:
-
             return None
 
-        return self._map_layer(
-            response
-        )
+        item = response.get("dataset") or response.get("resource") or response
+        if isinstance(item, dict):
+            return self._map_layer(item)
+
+        return None
 
     def get_dataset_detail(self, pk: int | str) -> Layer | None:
         """
@@ -767,7 +844,8 @@ class DatasetAPI:
         self,
         keyword: str,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = MAX_PAGE_SIZE,
+        fetch_all: bool = True,
     ) -> list[Layer]:
         """
         Search dataset.
@@ -777,10 +855,12 @@ class DatasetAPI:
             page=page,
             page_size=page_size,
             search=keyword,
+            fetch_all=fetch_all,
         )
 
     def refresh(
         self,
+        progress_callback: Any | None = None,
     ) -> list[Layer]:
         """
         Refresh dataset from server.
@@ -793,7 +873,10 @@ class DatasetAPI:
             "Refreshing datasets..."
         )
 
-        return self.get_datasets()
+        return self.get_datasets(
+            fetch_all=True,
+            progress_callback=progress_callback,
+        )
 
     # ==========================================================
     # Download

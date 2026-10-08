@@ -24,12 +24,53 @@ maintain and compatible with multiple versions of GeoNode, QGIS and Python.
 import os
 
 # =============================================================================
+# Plugin Root & Environment Initialization (.env)
+# =============================================================================
+
+PLUGIN_ROOT = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+    )
+)
+
+def _load_env_file(env_path: str) -> None:
+    """Memuat variabel konfigurasi dan kredensial dari file .env ke os.environ."""
+    if not os.path.isfile(env_path):
+        return
+    # Coba gunakan python-dotenv jika terpasang
+    try:
+        import dotenv
+        dotenv.load_dotenv(env_path, override=False)
+        return
+    except Exception:
+        pass
+
+    # Parser mandiri bawaan Python sebagai fallback tanpa ketergantungan library luar
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip("'\"")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        pass
+
+_ENV_PATH = os.path.join(PLUGIN_ROOT, ".env")
+_load_env_file(_ENV_PATH)
+
+# =============================================================================
 # Plugin Information
 # =============================================================================
 
 PLUGIN_NAME = "GeoNode Connector"
 
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "1.0.0"
 
 PLUGIN_AUTHOR = "Alif Marwan Hadid"
 
@@ -69,15 +110,15 @@ SUPPORTED_PYTHON_VERSIONS = (
 # Default Connection
 # =============================================================================
 
-DEFAULT_SERVER = "http://localhost"
+DEFAULT_SERVER = os.getenv("DEFAULT_SERVER", "https://geonode-beta.jogjakota.go.id")
 
 VERIFY_SSL = True
 
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 60
 
 CONNECT_TIMEOUT = 10
 
-READ_TIMEOUT = 30
+READ_TIMEOUT = 60
 
 MAX_RETRIES = 3
 
@@ -106,12 +147,14 @@ DEFAULT_TOKEN_TYPE = "Bearer"
 # OAuth Configuration
 # =============================================================================
 
-OAUTH_CLIENT_ID = (
-    "p7PQ487EG3VCEoc4seo0Jh6pSM80L4Z82T1EKnGK"
+OAUTH_CLIENT_ID = os.getenv(
+    "OAUTH_CLIENT_ID",
+    "fkl0njOmuQeyDEtzR4Oq3b3iRAnVXwNYCUeHXbku"
 )
 
-OAUTH_CLIENT_SECRET = (
-    "Dwfeqt8GVwVREVDVWOIfUjFlYk8xEMIM9f0KXi1Eo6mhebExPtiY3DgKv6EtPTNv5eW3I0t4YhZn6f4ZaAOHKYoNujRktR0Pj03ukS2Oo3sx2TwLHQAUZeMjKYtdL44P"
+OAUTH_CLIENT_SECRET = os.getenv(
+    "OAUTH_CLIENT_SECRET",
+    "MWtM6EX1lBRi82MKzyvINIBxYYweYQjLunrLS9OxuFPPpDP36wvyundSK8MUejNcJIVGJDhq81bsNCEg6m658ahJDu3qQYhL87822K2i1JoBIiRMZ1elh3iWjbyUokOj"
 )
 
 # =============================================================================
@@ -184,19 +227,30 @@ GEOSERVER_DEFAULT_WORKSPACE = "geonode"
 
 GEOSERVER_TIMEOUT = 60
 
-GEOSERVER_ADMIN_USER = "admin"
+GEOSERVER_ADMIN_USER = os.getenv("GEOSERVER_ADMIN_USER", "admin")
 
-GEOSERVER_ADMIN_PASSWORD = "7hVVGXu40mpDyyc"
+GEOSERVER_ADMIN_PASSWORD = os.getenv("GEOSERVER_ADMIN_PASSWORD", "WzL2i0Nfy7gossM")
 
 # =============================================================================
 # PostGIS Datastore Configuration (GeoNode backend)
 # =============================================================================
 
-POSTGIS_DEFAULT_HOST = "172.19.0.2"
-POSTGIS_DEFAULT_PORT = 5432
-POSTGIS_DEFAULT_DB = "geonode_project_data"
-POSTGIS_DEFAULT_USER = "geonode_project_data"
-POSTGIS_DEFAULT_PASSWORD = "feNbHr705xgTtHh"
+POSTGIS_DEFAULT_HOST = os.getenv("POSTGIS_DEFAULT_HOST", "192.168.10.83")
+POSTGIS_DEFAULT_PORT = int(os.getenv("POSTGIS_DEFAULT_PORT", "5432"))
+POSTGIS_DEFAULT_DB = os.getenv("POSTGIS_DEFAULT_DB", "project_name_data")
+POSTGIS_DEFAULT_USER = os.getenv("POSTGIS_DEFAULT_USER", "project_name_data")
+POSTGIS_DEFAULT_PASSWORD = os.getenv("POSTGIS_DEFAULT_PASSWORD", "kNgo46mCu5jErcJ")
+
+# Kredensial Superuser PostgreSQL Backend
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "yhK7USMSVAlUV47")
+
+# Kredensial Basis Data Internal GeoNode (Metadata/Django Database)
+GEONODE_DATABASE = os.getenv("GEONODE_DATABASE", "project_name")
+GEONODE_DATABASE_USER = os.getenv("GEONODE_DATABASE_USER", "project_name")
+GEONODE_DATABASE_PASSWORD = os.getenv("GEONODE_DATABASE_PASSWORD", "JNOFc3PEBJriqvm")
+GEONODE_DATABASE_SCHEMA = os.getenv("GEONODE_DATABASE_SCHEMA", "public")
+GEONODE_GEODATABASE_SCHEMA = os.getenv("GEONODE_GEODATABASE_SCHEMA", "public")
 
 # =============================================================================
 # Upload Configuration
@@ -238,13 +292,6 @@ LOG_FORMAT = (
 # Plugin Paths
 # =============================================================================
 
-PLUGIN_ROOT = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..",
-    )
-)
-
 ICON_PATH = os.path.join(
     PLUGIN_ROOT,
     "icon_plugin_qgis.png",
@@ -266,6 +313,21 @@ STYLE_DIR = os.path.join(
     PLUGIN_ROOT,
     "ui",
     "styles",
+)
+
+CACHE_DIR = os.path.join(
+    PLUGIN_ROOT,
+    "cache",
+)
+
+SHAPEFILE_CACHE_DIR = os.path.join(
+    CACHE_DIR,
+    "shapefiles",
+)
+
+GEOJSON_CACHE_DIR = os.path.join(
+    CACHE_DIR,
+    "geojson",
 )
 
 # =============================================================================
