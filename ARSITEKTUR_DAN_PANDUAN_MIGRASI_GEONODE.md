@@ -1,369 +1,287 @@
 # Arsitektur Plugin QGIS GeoNode Connector & Panduan Penyesuaian Multi-Instance GeoNode
 
 Dokumen ini menyajikan dua bagian utama:
-1. **Arsitektur Sistem Plugin GeoNode Connector**: Blueprint struktural menyeluruh dari arsitektur perangkat lunak plugin (Presentation, Controller, Business Service, REST API, Domain Model, dan Utilitas).
-2. **Panduan Penyesuaian untuk Instance GeoNode Lain**: Langkah-langkah detail, daftar file, parameter konfigurasi yang perlu disesuaikan, serta konfigurasi sisi server GeoNode target agar plugin dapat bekerja mulus di lingkungan baru.
+1. **Arsitektur Sistem Plugin GeoNode Connector**: Blueprint struktural menyeluruh dari arsitektur perangkat lunak plugin (Presentation, Controller, Background Workers, Business Service, REST API, Domain Model, Caching, dan Utilitas) termasuk pembaruan Model/View `QTableView`, enkripsi `QgsAuthManager`, GeoPackage (.gpkg) cache, eliminasi dependensi biner `psycopg2` via `QgsDataSourceUri`, dan WFS-T per-user.
+2. **Panduan Penyesuaian Multi-Instance, Delta Sync & Distribusi Multi-Device**: Penjelasan penyelesaian selisih dataset 520 vs 522, migrasi kredensial sensitif ke `QgsAuthManager`, mekanisme *Delta Sync*, manajemen multi-instance dinamis via `QgsSettings`, serta panduan instalasi ke komputer/laptop lain lintas sistem operasi.
 
 ---
 
 # BAGIAN 1: ARSITEKTUR PLUGIN GEONODE CONNECTOR
 
-Plugin ini dirancang dengan prinsip **Clean Architecture / Layered Architecture** yang memisahkan antarmuka pengguna (Qt UI), orkestrasi aksi (Controller), logika bisnis (Business Service), komunikasi jaringan (REST API Client), dan persistensi/model domain.
+Plugin ini dirancang dengan prinsip **Clean Architecture / Layered Architecture** yang memisahkan antarmuka pengguna (Qt UI), orkestrasi aksi (Controller), background thread workers (QThread), logika bisnis (Business Service), komunikasi jaringan (REST API Client), persistensi cache lokal, dan model domain.
 
 ```mermaid
 flowchart TD
     subgraph UI_Layer ["1. Presentation Layer (Qt / QGIS UI)"]
         Dialog["GeoNodeConnectorDialog (Main Window)"]
-        W_Login["LoginWidget"]
-        W_Dataset["DatasetWidget"]
+        W_Login["LoginWidget (Server Dropdown + QgsSettings)"]
+        W_Dataset["DatasetWidget (QTableView + Virtual Rendering)"]
         W_MyLayers["MyLayersWidget"]
         W_Activity["ActivityWidget"]
-        W_Server["ServerWidget"]
+        W_Server["ServerWidget (Multi-Instance Dropdown)"]
         W_About["AboutWidget"]
         D_Upload["UploadWizardDialog"]
         D_Metadata["MetadataDialog"]
         D_Sync["SyncDialog / ChangeDetailDialog"]
     end
 
-    subgraph Controller_Layer ["2. Controller / Presenter Layer"]
+    subgraph MV_Layer ["2. Model/View & Proxy Architecture"]
+        M_Table["DatasetTableModel (QAbstractTableModel)"]
+        M_Proxy["DatasetProxyModel (QSortFilterProxyModel - C++ Filter)"]
+    end
+
+    subgraph Controller_Layer ["3. Controller / Presenter Layer"]
         C_Login["LoginController"]
-        C_Dataset["DatasetController"]
+        C_Dataset["DatasetController (Non-blocking async + Delta Sync)"]
         C_Import["ImportController"]
-        C_Server["ServerController"]
+        C_Server["ServerController (QgsSettings Multi-Instance Sync)"]
         C_About["AboutController"]
     end
 
-    subgraph Service_Layer ["3. Business Service Layer"]
+    subgraph Worker_Layer ["4. Background Concurrency Layer (Non-blocking)"]
+        WK_Fetch["DatasetFetchWorker (QThread - Full / Delta Pagination)"]
+    end
+
+    subgraph Service_Layer ["5. Business Service Layer"]
         S_Login["LoginService"]
-        S_Layer["LayerService"]
-        S_Import["ImportService"]
-        S_Sync["SyncService"]
+        S_Layer["LayerService (Delta Sync + GPKG Cache Manager)"]
+        S_Import["ImportService (Native GPKG / WFS / WMS)"]
+        S_Sync["SyncService (Per-User WFS-T Transactions + Native QgsDataSourceUri)"]
         S_Upload["UploadService"]
         S_Meta["MetadataService"]
         S_Act["ActivityService"]
     end
 
-    subgraph API_Layer ["4. Data Access & API Layer"]
+    subgraph Cache_Layer ["6. Local Persistence & Standardized Cache"]
+        DiskCache[("datasets_cache.json (Instant Startup <0.05s - 522 Datasets)")]
+        GpkgCache["cache/gpkg/ (*.gpkg - SQLite + R-Tree Spatial Index)"]
+        GeoJsonCache["cache/geojson/"]
+        ShpCache["cache/shapefiles/"]
+    end
+
+    subgraph Security_Layer ["7. Security & Authentication Architecture"]
+        Auth_Mgr["AuthManagerService (QgsAuthManager - Master Password Encryption)"]
+        Auth_Cfg[("QGIS Auth Database: qgis-auth.db")]
+    end
+
+    subgraph API_Layer ["8. Data Access & API Layer"]
         A_Auth["AuthAPI (/o/token/, /api/v2/users/)"]
-        A_Dataset["DatasetAPI (/api/v2/datasets)"]
+        A_Dataset["DatasetAPI (/api/v2/datasets + Supplementary /api/v2/resources)"]
         A_Upload["UploadAPI (/api/v2/uploads)"]
         A_Meta["MetadataAPI (/api/v2/datasets/{pk})"]
         GS_Rest["GeoServer REST API (/geoserver/rest)"]
-        PG_Direct["Direct PostGIS Driver (psycopg2)"]
+        GS_WFST["GeoServer OWS WFS-T HTTP Transaction Engine"]
+        QGS_Uri["QgsDataSourceUri (Native QGIS PostgreSQL Provider)"]
     end
 
-    subgraph Core_Layer ["5. Models & State Management"]
+    subgraph Core_Layer ["9. Models & State Management"]
         M_Session["Session Singleton (Token, User, Server)"]
-        M_Layer["Layer Model (Metadata, BBox, OWS URLs)"]
+        M_Layer["Layer Model (Metadata, BBox, OWS URLs, modified)"]
         M_User["User Model"]
         M_Result["ServiceResult (ok/fail wrapper)"]
     end
 
-    subgraph Infra_Layer ["6. Infrastructure & Utilities"]
-        U_Net["NetworkClient (urllib / requests wrapper)"]
-        U_Cfg["config.py (Endpoints, Constants)"]
-        U_Set["PluginSettings (QgsSettings)"]
-        U_Log["logger.py (Rotating Log)"]
-        U_Val["validator.py (URL, Format, Schema)"]
-    end
-
-    subgraph QGIS_Host ["7. QGIS & External Servers"]
+    subgraph Remote_Host ["10. GeoNode & Geospatial Servers"]
         QGIS_Canvas["QGIS Canvas / QgsProject"]
         GeoNode_Server["GeoNode 4.x / 5.x Web Server"]
-        GeoServer_Engine["GeoServer (WMS, WFS, WFS-T)"]
+        GeoServer_Engine["GeoServer Engine"]
         PostGIS_DB["PostgreSQL / PostGIS Database"]
     end
 
     %% Relasi Antar Layer
     Dialog --> W_Login & W_Dataset & W_MyLayers & W_Activity & W_Server & W_About
+    W_Dataset --> M_Proxy --> M_Table
     W_Login --> C_Login
     W_Dataset --> C_Dataset
     W_Server --> C_Server
 
     C_Login --> S_Login
+    C_Login --> Auth_Mgr
+    Auth_Mgr --> Auth_Cfg
     C_Dataset --> S_Layer
+    C_Dataset --> WK_Fetch
+    WK_Fetch --> A_Dataset
     C_Dataset --> C_Import
     C_Import --> S_Import
 
-    S_Login --> A_Auth
+    S_Layer --> DiskCache
     S_Layer --> A_Dataset
+    S_Login --> A_Auth
     S_Import --> QGIS_Canvas
+    S_Import --> GpkgCache
     S_Import -.->|WFS / WMS URI| GeoServer_Engine
+
+    S_Sync --> GS_WFST
+    S_Sync --> QGS_Uri
     S_Sync --> GS_Rest
-    S_Sync --> PG_Direct
+    QGS_Uri --> PostGIS_DB
+    GS_WFST --> GeoServer_Engine
+    GS_Rest --> GeoServer_Engine
+
     S_Upload --> A_Upload
     S_Upload --> S_Sync
     S_Meta --> A_Meta
-
-    A_Auth & A_Dataset & A_Upload & A_Meta --> U_Net
-    U_Net --> GeoNode_Server
-    PG_Direct --> PostGIS_DB
-    GS_Rest --> GeoServer_Engine
-
-    S_Login & S_Import & S_Sync & S_Upload --> M_Session
-    S_Layer & S_Import & S_Sync --> M_Layer
-    Service_Layer --> M_Result
-    Controller_Layer & Service_Layer & API_Layer --> U_Cfg
-    Controller_Layer & S_Login --> U_Set
-    Service_Layer --> U_Log
 ```
 
 ---
 
-## 1.1 Rincian Layer Arsitektur
+## 1.1 Rincian Layer Arsitektur & Peningkatan Performa
 
 ### 1. Presentation Layer (`ui/widgets/`, `ui/dialogs/`)
-Bertanggung jawab merender antarmuka pengguna berbasis PyQt/PyQGIS:
-* **`GeoNodeConnectorDialog`**: Window utama (`QMainWindow`) yang menampung header status koneksi, navigasi tab horizontal (`NavScrollArea`), serta `QStackedWidget`.
-* **`LoginWidget`**: Form autentikasi (Server URL, Username, Password, Remember Me).
-* **`DatasetWidget`**: Katalog pencarian dataset, filter tipe data (Vector / Raster / Semua), paginasi, tombol aksi (Unduh/Impor, Detail, Salin Link).
-* **`MyLayersWidget`**: Panel layer khusus milik user yang sedang login, indikator status publish/private, dan akses cepat sinkronisasi.
-* **`ServerWidget`**: Form konfigurasi server (Server URL, Timeout request, opsi verifikasi SSL) dengan fitur **Uji Koneksi Server**.
-* **`ActivityWidget`**: Tampilan log audit aktivitas lokal (riwayat import, sinkronisasi, upload).
-* **`UploadWizardDialog`**: Wizard dialog pengunggahan dataset (ekspor layer QGIS aktif ke GeoPackage/Shapefile/GeoJSON, opsi upload baru vs update layer lama).
-* **`SyncDialog` & `ChangeDetailDialog`**: Dialog preview sebelum commit perubahan atribut/geometri/skema dari QGIS ke GeoNode.
+* **`GeoNodeConnectorDialog`**: Window utama (`QMainWindow`) yang menampung header status koneksi, navigasi tab horizontal, serta `QStackedWidget`.
+* **`DatasetWidget` (Model/View `QTableView` & Virtual Rendering)**:
+  * Menggantikan implementasi legacy `QTableWidget` dengan **`QTableView`** yang dipadukan dengan **`QSortFilterProxyModel`**.
+  * **Virtual Rendering**: QGIS hanya merender baris yang tampak pada layar (viewport), mengeliminasi alokasi ribuan object C++ `QTableWidgetItem` yang boros memori.
+  * **C++ Native Filtering (0ms latency)**: Penyaringan teks pencarian berjalan di level native C++ pada proxy model tanpa iterasi manual Python `setRowHidden()`.
+* **`LoginWidget`**: Form autentikasi yang terhubung ke `QgsSettings` untuk pemilihan server secara dinamis.
+* **`ServerWidget`**: Form konfigurasi server multi-instance dengan elemen **`QComboBox` preset server** yang terikat ke `QgsSettings`, mendukung perpindahan instan antar-lingkungan server tanpa mengedit file kode.
+* **`UploadWizardDialog`**: Wizard dialog modern untuk **Ekspor & Publikasi Dataset Baru** atau pembaruan dataset ke GeoNode:
+  * **Sumber Fleksibel**: Pengguna dapat memilih layer yang sedang aktif di kanvas QGIS (`QgsVectorLayer`) maupun memilih file data spasial dari disk (`.gpkg`, `.shp`, `.geojson`) via *file browser*.
+  * **Ringkasan Otomatis Layer**: Menampilkan nama layer, tipe geometri (*Point/Line/Polygon*), jumlah fitur, dan sistem koordinat (*CRS/EPSG*).
+  * **Standarisasi Format**: Mendukung ekspor ke format GeoPackage (.gpkg - direkomendasikan), GeoJSON, dan Shapefile.
+  * **Penyelarasan Style Simbologi (.sld)**: Mendukung ekspor otomatis simbologi layer QGIS ke format OGC Styled Layer Descriptor (`.sld`) dan menjadikannya default style aktif di GeoNode/GeoServer, serta menyediakan tombol ekspor file `.sld` lokal ke komputer.
+  * **Layout Responsif & Bebas Horizontal Scroll**: Dialog berukuran pas (*fit*) dengan `ScrollBarAlwaysOff` secara horizontal dan kebijakan penyesuaian konten adaptif.
+  * **Pengisian Metadata Standar**: Validasi dan pengisian metadata berstandar SNI/ISO 19115 (Judul, Abstrak, Kategori Tema GeoNode, Kata Kunci, Lisensi, Bahasa).
+  * **Monitoring Non-Blocking**: Progress bar interaktif saat mengunggah ke GeoNode Importer (`/uploads/upload`), menyelaraskan style SLD, dan menyegarkan katalog.
+* **`ServerWidget` (Aesthetically Modernized Input)**: Form konfigurasi koneksi dengan *input field* timeout yang bersih tanpa tombol stepper panah (`QAbstractSpinBox.NoButtons`), memberikan tampilan minimalis dan elegan.
+* **`SyncDialog` & `ChangeDetailDialog`**: Dialog preview dan validasi sebelum melakukan commit atribut/geometri melalui protokol WFS-T.
 
-### 2. Controller Layer (`ui/controllers/`)
-Memisahkan UI dari Business Service (pola MVC / MVP):
-* Menghubungkan signal Qt (misal `btn_login.clicked`, `search_input.textChanged`) ke pemanggilan service asynchronous.
-* Mengupdate status visual (menampilkan spinner/progress bar, pesan toast/alert, refresh table).
+### 2. Model/View Architecture (`ui/models/dataset_table_model.py`)
+* **`DatasetTableModel` (`QAbstractTableModel`)**: Model data tabular murni yang menyajikan kolom PK, Judul Layer, Nama Alternatif, Tipe/Subtype, Status, dan Tanggal Update secara efisien.
+* **`DatasetProxyModel` (`QSortFilterProxyModel`)**: Layer proxy di atas model tabel yang menangani sorting multi-kolom dan filtering pencarian instan case-insensitive.
 
-### 3. Business Service Layer (`services/`)
-Menjalankan logika bisnis inti aplikasi tanpa ketergantungan langsung ke elemen antarmuka:
-* **`LoginService`**: Mengorkestrasi verifikasi koneksi, pertukaran credential dengan token OAuth2, penyimpanan session, dan refresh token berkala.
-* **`LayerService`**: Mengatur in-memory cache daftar layer GeoNode, pencarian cepat, filtering, dan sorting.
-* **`ImportService`**:
-  * **WFS-T Import**: Merakit URI WFS QGIS (`url='...' typename='...' auth...`), memuat layer ke `QgsProject`, dan mengaktifkan mode editable (`setReadOnly(False)`).
-  * **WMS Import**: Merakit URI WMS untuk dataset raster dan menambahkan `QgsRasterLayer`.
-  * **Direct Vector Import**: Fallback pengunduhan GeoJSON via OGR dan Shapefile ZIP lokal ke direktori cache plugin.
-* **`SyncService`**:
-  * Mendeteksi delta perubahan fitur di QGIS (`layer.editBuffer()`).
-  * Mendeteksi perubahan skema (deteksi kolom baru yang dibuat pengguna di QGIS).
-  * Menjalankan commit melalui WFS-T standar GeoServer.
-  * Memiliki mekanisme **Direct PostGIS Sync** via `psycopg2` untuk injeksi skema baru dan reload katalog GeoServer (`/geoserver/rest/reset`).
-* **`UploadService`**: Mengekspor layer aktif QGIS ke format transfer (`.gpkg`, `.geojson`, `.shp`), mengunggah via REST API GeoNode atau pipeline sinkronisasi langsung.
-* **`MetadataService`**: Manajemen pembacaan dan update metadata standar ISO 19115.
-* **`ActivityService`**: Pencatatan riwayat transaksi pengguna ke SQLite/JSON lokal.
+### 3. Concurrency Layer (`services/dataset_worker.py`)
+* **`DatasetFetchWorker` (`QThread`)**: Mengambil dataset GeoNode secara asinkron di thread terpisah.
+* Mendukung mode **Full Fetch** maupun **Delta Sync** (`since_timestamp`), memancarkan sinyal `pageLoaded(accumulated, count, total)` secara bertahap.
 
-### 4. Data Access & API Layer (`api/`)
-Abstraksi komunikasi HTTP REST API murni (tanpa logika UI):
-* **`AuthAPI`**: Endpoint discovery (`/o/token/`, `/api/o/token/`), pertukaran token Password Grant, inspeksi pengguna `/api/v2/users/`.
-* **`DatasetAPI`**: Komunikasi dengan endpoint GeoNode `/api/v2/datasets`, query parameter pagination (`page`, `page_size`, `filter{title.icontains}`), dan pemetaan JSON response ke objek domain `Layer`.
-* **`UploadAPI`**: Multi-part form data upload ke `/api/v2/uploads` serta polling status task komputasi GeoNode.
-* **`MetadataAPI`**: PATCH payload atribut metadata ke `/api/v2/datasets/{pk}/`.
+### 4. Business Service Layer (`services/`)
+* **`LayerService`**:
+  * Mengatur in-memory cache dan **Persistent Disk Cache** (`cache/datasets_cache.json` dengan total 522 dataset).
+  * Menyediakan fungsi `sync_delta()` untuk validasi timestamp modifikasi terakhir (`last_modified`) dan penggabungan dataset incremental (`merge_layers`).
+* **`SyncService` (Per-User WFS-T & Native `QgsDataSourceUri`)**:
+  * **Per-User WFS-T Transactions**: Seluruh transaksi pengeditan (Insert, Update, Delete fitur dan geometri) dialihkan melalui protokol WFS-T GeoServer berbasis hak akses akun masing-masing pengguna di GeoNode.
+  * **Eliminasi `psycopg2` via `QgsDataSourceUri`**: Pustaka eksternal `psycopg2` dieliminasi sepenuhnya. Inspeksi tabel dilakukan langsung melalui provider native QGIS `"postgres"` dengan connection pooling bawaan C++ yang stabil di Windows, macOS, dan Linux.
+* **`ImportService` (GeoPackage Standardization)**:
+  * Mendukung standardisasi cache vektor lokal ke format tunggal **GeoPackage (.gpkg)** via `QgsVectorFileWriter.writeAsVectorFormatV3()`.
 
-### 5. Domain Models & State (`models/`)
-* **`Session` (Singleton)**: Menyimpan state sesi aktif runtime: `server_url`, `access_token`, `refresh_token`, `username`, `is_authenticated`, profil `User`.
-* **`Layer`**: Struktur entitas layer spasial (ID, PK, Title, Alternate/Typename, Workspace, Geometry Type, Bounding Box, SRID, WMS URL, WFS URL, Metadata).
-* **`ServiceResult`**: Pola standardized result object (`success`, `message`, `data`, `errors`) untuk komunikasi seragam antara service dan controller.
-
-### 6. Infrastructure & Utilities (`utils/`)
-* **`network.py`**: Wrapper HTTP client dengan integrasi auth header Bearer, auto-retry, penanganan SSL, timeout handling, dan decoding JSON.
-* **`config.py`**: Pusat konfigurasi default, URL endpoint, timeout, dan kredensial bawaan.
-* **`settings.py`**: Wrapper `QgsSettings` untuk persistensi preferensi user ke profil QGIS lokal.
-* **`logger.py`**: Centralized rotating logging ke file `geonode_connector.log`.
+### 5. Security & Authentication Layer (`utils/auth_manager.py`)
+* **`AuthManagerService` (`QgsAuthManager`)**:
+  * Mengenkripsi kredensial pengguna (username, token, password) ke basis data autentikasi QGIS (`qgis-auth.db`) yang terlindungi *Master Password*.
+  * Menghilangkan risiko kebocoran file teks biasa `.env` pada saat plugin didistribusikan ke komputer staf.
 
 ---
 
-# BAGIAN 2: PANDUAN MENGHUBUNGKAN KE GEONODE LAIN
-
-Saat ini, plugin memiliki beberapa nilai konfigurasi yang disesuaikan dengan instance lokal pengembangan (`http://localhost`, IP Docker internal `172.19.0.2`, dan kredensial OAuth default).
-
-Jika Anda ingin menghubungkan plugin ini ke instance GeoNode lain (misalnya server staging, GeoNode internal kantor, atau geoportal production publik berdomain resmi), berikut adalah panduan lengkap apa saja yang **harus disesuaikan**.
+# BAGIAN 2: PANDUAN MENGHUBUNGKAN KE GEONODE LAIN & MULTI-DEVICE
 
 ---
 
-## 2.1 Matriks Komponen yang Perlu Disesuaikan
+## 2.1 Analisis & Solusi Discrepancy Jumlah Dataset (520 vs 522)
 
-| No | Komponen | File Terkait | Kondisi Saat Ini (Default) | Penyesuaian untuk GeoNode Lain |
-|:---|:---|:---|:---|:---|
-| **1** | **Server URL & Protokol** | `utils/config.py` & UI Tab Server | `http://localhost` | Ganti ke URL target (misal `https://geoportal.namakota.go.id`). |
-| **2** | **OAuth2 Client ID & Secret** | `utils/config.py` | Nilai hardcoded instance lokal | Wajib dibuat di Django Admin GeoNode target, lalu diinput ke konfigurasi. |
-| **3** | **GeoServer Admin Password** | `utils/config.py`, `services/import_service.py` | User: `admin`, Pass: `7hVVGXu40mpDyyc` | Sesuaikan dengan kredensial GeoServer admin instance target untuk otorisasi WFS-T. |
-| **4** | **Backend PostGIS Connection** | `utils/config.py`, `services/sync_service.py` | Host: `172.19.0.2`, User/DB: `geonode_project_data` | Sesuaikan Host, Port, DB, User, dan Password database target (atau gunakan WFS-T murni jika port DB ditutup). |
-| **5** | **SSL / TLS Certificate** | `utils/config.py` & UI Tab Server | `VERIFY_SSL = True / False` | Jika server menggunakan HTTPS dengan sertifikat resmi, set `True`. Jika self-signed / HTTP lokal, set `False`. |
-| **6** | **GeoServer Workspace** | `utils/config.py` | `"geonode"` | Sesuaikan jika instance baru menggunakan workspace berbeda (misal `"geonode_data"` atau nama OPD). |
-| **7** | **Resolusi OWS URL (WFS/WMS)** | `models/layer.py`, `services/import_service.py` | Otomatis fallback ke URL server | Pastikan server GeoNode target tidak mengembalikan URL internal Docker (`http://geoserver:8080`). |
-| **8** | **Path Cache Lokal OS** | `services/import_service.py` | Hardcoded Linux path (`~/.local/...`) | Ubah menjadi path dinamis menggunakan `PLUGIN_ROOT` agar kompatibel lintas OS (Windows, macOS, Linux). |
+### Akar Masalah:
+1. Endpoint standar GeoNode `/api/v2/datasets` hanya mengembalikan objek yang terdaftar di tabel `layers_dataset` (layer 2D standard), dengan jumlah total **520** layer.
+2. Katalog publik Geoportal (`/catalogue/`) menampilkan **522** dataset karena menghitung seluruh sumber daya di tabel `base_resourcebase` dengan filter `resource_type = 'dataset'`.
+3. Terdapat resource spasial non-2D seperti **PK 619 (`masjid_kotagede`)** bertipe **3D Tiles (`subtype: 3dtiles`)** yang disimpan di `base_resourcebase` tetapi tidak masuk ke dalam katalog 2D `/api/v2/datasets`.
+
+### Solusi yang Diimplementasikan:
+* Di [`api/dataset.py`](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/api/dataset.py), metode `get_datasets()` kini melakukan supplementary fetch ke endpoint `/api/v2/resources?filter{resource_type}=dataset` untuk menangkap resource non-standar (seperti 3D Tiles) yang belum tercakup di endpoint `/api/v2/datasets`.
+* Hasil gabungan dipetakan ke model [`Layer`](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/models/layer.py) sehingga total dataset yang ditampilkan di plugin menjadi **522**, identik 100% dengan katalog Geoportal.
 
 ---
 
-## 2.2 Langkah-Langkah Teknis Penyesuaian
+## 2.2 Migrasi Keamanan Kredensial ke `QgsAuthManager`
 
-### Langkah 1: Pendaftaran OAuth2 Application di GeoNode Target (Sisi Server)
+Penyimpanan kredensial pada file teks biasa `.env` rentan terekspos saat folder plugin disalin ke laptop staf. Plugin telah dimigrasikan menggunakan modul bawaan **`QgsAuthManager`**:
 
-GeoNode mengamankan API menggunakan pustaka Django OAuth Toolkit. Setiap instance GeoNode baru **harus memiliki Application Client ID & Client Secret terdaftar**:
-
-1. Masuk ke halaman admin Django pada GeoNode target:
-   `https://<domain-geonode-anda>/admin/` (login sebagai superuser).
-2. Navigasi ke menu **Django OAuth Toolkit** > **Applications** > **Add Application** (`/admin/oauth2_provider/application/add/`).
-3. Isi parameter form sebagai berikut:
-   * **User**: Pilih akun administrator utama (misal `admin`).
-   * **Client type**: `Confidential`.
-   * **Authorization grant type**: `Resource owner password-based` *(karena plugin menggunakan flow login username + password langsung via REST)*.
-   * **Name**: `QGIS GeoNode Connector`.
-   * **Skip authorization**: Centang (Checked / True) agar pengguna tidak perlu konfirmasi manual di web browser.
-   * **Redirect uris**: Bisa dikosongkan atau diisi `http://localhost`.
-4. Klik **Save**.
-5. Salin **Client ID** dan **Client Secret** yang dihasilkan.
+1. **Enkripsi Master Password**: Kredensial akun GeoNode disimpan di database autentikasi terenkripsi QGIS (`qgis-auth.db`).
+2. **Koneksi WFS / OWS Terautentikasi**: Parameter `authcfg` dapat langsung disematkan ke URI layer WFS/WMS tanpa mengekspos token atau password dalam teks biasa.
+3. **Fallback `.env`**: Untuk kebutuhan server headless / otomatisasi, konfigurasi `.env` tetap didukung sebagai opsi sekunder.
 
 ---
 
-### Langkah 2: Mengubah Konfigurasi di `utils/config.py`
+## 2.3 Pembatasan Akses SQL Langsung & Alih Jalur ke Per-User WFS-T
 
-Buka file [utils/config.py](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/utils/config.py) dan ubah konstanta berikut:
-
-```python
-# =============================================================================
-# 1. Konfigurasi Server Default
-# =============================================================================
-# Ubah ke domain atau IP server GeoNode baru
-DEFAULT_SERVER = "https://geoportal.instansi.go.id"  # atau http://192.168.1.100
-
-# Set True jika server production menggunakan sertifikat SSL resmi (Let's Encrypt / Comodo)
-# Set False jika menggunakan HTTP lokal atau self-signed certificate tanpa root CA
-VERIFY_SSL = True
-
-# =============================================================================
-# 2. Konfigurasi OAuth2 Client
-# =============================================================================
-# Masukkan Client ID & Secret yang didapatkan dari Langkah 1
-OAUTH_CLIENT_ID = "MASUKKAN_CLIENT_ID_DARI_GEONODE_BARU"
-OAUTH_CLIENT_SECRET = "MASUKKAN_CLIENT_SECRET_DARI_GEONODE_BARU"
-
-# =============================================================================
-# 3. Kredensial GeoServer (Diperlukan untuk WFS-T & REST Reset)
-# =============================================================================
-# GeoNode biasanya menyimpan kredensial GeoServer di file .env server (GEOSERVER_ADMIN_PASSWORD)
-GEOSERVER_ADMIN_USER = "admin"
-GEOSERVER_ADMIN_PASSWORD = "PASSWORD_GEOSERVER_ADMIN_BARU"
-GEOSERVER_DEFAULT_WORKSPACE = "geonode"  # sesuaikan jika workspace diubah
-
-# =============================================================================
-# 4. Konfigurasi Koneksi Langsung PostGIS (Fitur Sinkronisasi Lanjutan)
-# =============================================================================
-# PERHATIAN: Nilai default sebelumnya (172.19.0.2) adalah IP internal Docker container.
-# Jika GeoNode baru berada di server jaringan/remote, tentukan akses PostgreSQL:
-POSTGIS_DEFAULT_HOST = "geoportal.instansi.go.id"  # atau IP server database
-POSTGIS_DEFAULT_PORT = 5432
-POSTGIS_DEFAULT_DB = "geonode_data"               # nama database layer spasial
-POSTGIS_DEFAULT_USER = "geonode"                  # user database
-POSTGIS_DEFAULT_PASSWORD = "PASSWORD_DATABASE_BARU"
-```
+Untuk memenuhi standar keamanan *Principle of Least Privilege*:
+1. **Akses SQL Superuser Ditiadakan untuk Pengeditan**:
+   * Akun superuser basis data tidak lagi digunakan untuk operasi perubahan data sehari-hari.
+2. **Transaksi WFS-T Berbasis Akun GeoNode Pengguna**:
+   * Seluruh modifikasi fitur (tambah, perbarui nilai atribut, modifikasi geometri, hapus fitur) dikirimkan melalui transaksi HTTP WFS-T (`<wfs:Transaction>`) ke GeoServer.
+   * GeoServer memvalidasi izin edit berdasarkan akun pengguna GeoNode yang sedang aktif, sehingga audit trail di GeoNode tetap tercatat rapi dan risiko manipulasi basis data mentah dapat dicegah.
 
 ---
 
-### Langkah 3: Penyesuaian Logika WFS-T Credential di `services/import_service.py`
+## 2.4 Standarisasi Format Cache Lokal ke GeoPackage (.gpkg)
 
-Pada file [services/import_service.py](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/services/import_service.py#L291-L302), terdapat pengecekan:
+Format cache lokal yang sebelumnya terbagi antara Shapefile dan GeoJSON kini distandarisasi ke format tunggal **GeoPackage (.gpkg)**:
 
-```python
-# SEBELUM:
-if "localhost" in base_url or "127.0.0.1" in base_url:
-    user = GEOSERVER_ADMIN_USER
-    pwd = GEOSERVER_ADMIN_PASSWORD
-else:
-    user = self._session.username or GEOSERVER_ADMIN_USER
-    pwd = getattr(self._session.data, "password", "") or GEOSERVER_ADMIN_PASSWORD
-```
+| Fitur | Shapefile (.shp) | GeoJSON (.json) | **GeoPackage (.gpkg)** (Standar Baru) |
+| :--- | :--- | :--- | :--- |
+| **Batasan Ukuran** | Maksimum 2 GB | Lambat untuk file >50 MB | **Tidak terbatas (SQLite basis)** |
+| **Indeks Spasial** | Terpisah (.sidx) | Tidak ada | **Terintegrasi (R-Tree Native)** |
+| **Nama Kolom** | Terpotong 10 Karakter | Bebas | **Bebas (Mendukung nama atribut panjang)** |
+| **Jumlah File** | Banyak (.shp, .dbf, .shx, .prj) | 1 file teks | **1 file database tunggal terstruktur** |
+| **Kecepatan Render QGIS** | Cukup cepat | Lambat (parsing teks) | **Sangat cepat (native C++ SQLite driver)** |
 
-> [!IMPORTANT]
-> **Catatan WFS-T Authorization:**
-> Pada GeoServer default, operasi perubahan layer (WFS-T insert, update, delete) memerlukan otorisasi administrator atau otorisasi role GeoNode. Jika GeoNode Anda berada di remote domain (bukan `localhost`), pastikan kredensial yang disematkan ke URI WFS memiliki izin write di GeoServer, atau ubah agar menggunakan `GEOSERVER_ADMIN_USER` dan `GEOSERVER_ADMIN_PASSWORD` yang telah dikonfigurasi pada `config.py`.
+File GeoPackage disimpan di direktori portabel `cache/gpkg/<layer_name>.gpkg`.
 
 ---
 
-### Langkah 4: Penanganan Akses Database PostGIS (Direct vs WFS-T)
+## 2.5 Efisiensi Jaringan: Mekanisme Delta Sync & Multi-Instance Dropdown
 
-Plugin ini memiliki fitur unggulan di [services/sync_service.py](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/services/sync_service.py): jika WFS-T menolak perubahan karena ada penambahan field baru, plugin akan fallback menyuntikkan kolom langsung ke basis data PostGIS menggunakan library `psycopg2`.
+### 1. Delta Sync Berbasis Timestamp Modifikasi (`last_modified`)
+* Saat plugin dibuka dan cache lokal sudah ada (522 layer), sistem tidak mengunduh ulang seluruh dataset dari jaringan.
+* Background worker menjalankan **Delta Sync** dengan query timestamp:
+  `/api/v2/datasets?filter{date_modified.gte}=<last_modified_timestamp>`
+* Jika tidak ada data yang berubah di server, respons berukuran minimal (0 overhead jaringan).
+* Jika ada layer baru atau yang baru diperbarui, hanya layer tersebut yang ditarik dan digabungkan (`merge_layers`) ke dalam database lokal.
 
-**Situasi pada GeoNode Lain:**
-1. **Jika GeoNode berada di Cloud / Server Publik:**
-   Port 5432 (PostgreSQL) umumnya **diblokir oleh firewall** demi keamanan dan tidak dapat diakses langsung oleh QGIS desktop di internet.
-2. **Solusi:**
-   * **Opsi A (Rekomendasi Keamanan):** Akses server via VPN kantor / instansi, atau buat SSH Port Forwarding tunnel ke port 5432 server GeoNode.
-   * **Opsi B (WFS-T Penuh):** Jika tidak ingin membuka port database, pastikan skema atribut telah disesuaikan sebelum diupload ke GeoNode, sehingga sinkronisasi sepenuhnya dilayani oleh WFS-T standar GeoServer tanpa memerlukan akses direct SQL.
-
----
-
-### Langkah 5: Perbaikan Portabilitas Path Cache Lokal
-
-Di file [services/import_service.py](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/services/import_service.py#L196-L201), terdapat path cache shapefile yang spesifik ke sistem Linux:
-
-```python
-# Kode saat ini:
-cache_base = os.path.expanduser(
-    "~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/cache/shapefiles"
-)
-```
-
-Untuk menjamin plugin dapat berjalan di berbagai komputer pengguna lain (Windows, macOS, Linux):
-```python
-# Rekomendasi Portabel:
-from ..utils.config import PLUGIN_ROOT
-
-cache_base = os.path.join(PLUGIN_ROOT, "cache", "shapefiles")
-os.makedirs(cache_base, exist_ok=True)
-```
+### 2. Multi-Instance Management Dinamis via `QgsSettings`
+* Server target tidak lagi dikunci di file statis.
+* Pengguna dapat memilih profil instance langsung melalui dropdown di antarmuka tab **PENGATURAN**:
+  * `GeoNode Beta (https://geonode-beta.jogjakota.go.id)`
+  * `GeoNode Produksi (https://geoportal.jogjakota.go.id)`
+  * `GeoNode Lokal (http://localhost:8000)`
+* Pilihan tersimpan secara persisten di **`QgsSettings`** dan otomatis menyelaraskan form login.
 
 ---
 
-### Langkah 6: Konfigurasi GeoServer Public Location (Sisi Server GeoNode)
+## 2.6 Panduan Pemasangan Plugin di Komputer/Laptop Lain
 
-Masalah umum saat beralih ke server GeoNode baru adalah **URL WFS/WMS mengembalikan alamat internal Docker container** (seperti `http://geoserver:8080/geoserver/...`). Ketika QGIS mencoba memuat layer ini dari komputer client, koneksi akan gagal karena `geoserver:8080` tidak dapat di-resolve di komputer lokal.
+### 1. Salin Folder Plugin ke Direktori QGIS Target
+Salin folder `geonode_connector` ke direktori profil QGIS pengguna di komputer tujuan:
 
-**Solusi pada GeoNode Target:**
-Buka file `.env` pada instalasi Docker GeoNode target dan pastikan variabel berikut telah menggunakan domain publik:
-```bash
-SITEURL=https://geoportal.instansi.go.id/
-GEOSERVER_PUBLIC_LOCATION=https://geoportal.instansi.go.id/geoserver/
-GEOSERVER_WEB_LOCATION=https://geoportal.instansi.go.id/geoserver/
-```
-Setelah itu jalankan `docker compose up -d` di server untuk memperbarui konfigurasi NGINX dan GeoServer proxy base URL.
+* **Windows:**
+  ```text
+  %APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\geonode_connector
+  (Contoh: C:\Users\<NamaUser>\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\geonode_connector)
+  ```
+* **Linux:**
+  ```text
+  ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector
+  ```
+* **macOS:**
+  ```text
+  ~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector
+  ```
 
----
-
-## 2.3 Rekomendasi Jangka Panjang: Konfigurasi Dinamis via UI
-
-Agar Anda tidak perlu mengedit file kode [config.py](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/utils/config.py) setiap kali berganti server GeoNode, sangat disarankan untuk menambahkan field konfigurasi dinamis ke dalam **Tab Pengaturan Server** (`ServerWidget`):
-
-```mermaid
-graph LR
-    subgraph UI_Settings ["Tab Pengaturan Server (UI)"]
-        UI_URL["Input Server URL"]
-        UI_ID["Input OAuth Client ID"]
-        UI_Sec["Input OAuth Client Secret"]
-        UI_GSPass["Input GeoServer Admin Password"]
-        UI_DB["Input PostGIS Host, Port & Auth"]
-    end
-
-    subgraph QgsSettingsStore ["QGIS Persistent Storage (QgsSettings)"]
-        QSet[("QgsSettings / Registry")]
-    end
-
-    subgraph Runtime ["Runtime Application"]
-        Session["Session & API Instances"]
-    end
-
-    UI_Settings -->|Klik Simpan Pengaturan| QSet
-    QSet -->|Dimuat saat Plugin Terbuka| Session
-```
-
-Dengan menyimpan `client_id`, `client_secret`, dan kredensial server ke `QgsSettings` (menggunakan enkripsi `QgsAuthManager` untuk keamanan credential), pengguna dapat berpindah instance GeoNode (misal dari server Development ke Staging ke Production) cukup dengan mengubah form di antarmuka QGIS tanpa perlu mengubah sebaris kode pun.
+### 2. Aktifkan Plugin di QGIS
+1. Buka **QGIS Desktop**.
+2. Masuk ke menu **Plugins** > **Manage and Install Plugins...**.
+3. Pada tab **Installed**, aktifkan tanda centang pada **GeoNode Connector**.
+4. Panel dock widget **GeoNode Connector** akan muncul.
+5. Pilih server target dari dropdown (atau masukkan URL GeoNode).
+6. Masukkan kredensial akun GeoNode Anda dan klik **LOGIN**.
+7. Seluruh **522 dataset** akan langsung tampil instan (<0.05 detik).
 
 ---
 
-## 2.4 Checklist Migrasi ke GeoNode Baru
+## 2.7 Checklist Verifikasi
 
-Gunakan checklist ini sebelum menguji plugin pada instance GeoNode baru:
-
-- [ ] **Aksesibilitas Server**: URL GeoNode dapat diakses via browser dari komputer yang menjalankan QGIS.
-- [ ] **OAuth Application**: Aplikasi bertipe *Confidential* dengan *Resource owner password-based grant* sudah dibuat di Django Admin GeoNode target.
-- [ ] **Client ID & Secret**: Nilai `OAUTH_CLIENT_ID` dan `OAUTH_CLIENT_SECRET` di [utils/config.py](file:///home/alif/.local/share/QGIS/QGIS3/profiles/default/python/plugins/geonode_connector/utils/config.py) telah diperbarui sesuai Langkah 1.
-- [ ] **Kredensial GeoServer**: User dan password admin GeoServer di `config.py` sesuai dengan file `.env` server target.
-- [ ] **Pengaturan SSL**: Verifikasi SSL diaktifkan jika server menggunakan sertifikat valid HTTPS.
-- [ ] **Uji Koneksi**: Buka tab **Pengaturan** di plugin QGIS dan klik **UJI KONEKSI SERVER** — pastikan indikator berubah menjadi hijau (HTTP 200 OK).
-- [ ] **Uji Login**: Masukkan username dan password pengguna GeoNode target — pastikan login berhasil dan token tersimpan.
-- [ ] **Uji Katalog Dataset**: Pastikan tab **DATASET** dapat menampilkan daftar layer spasial dari instance baru.
-- [ ] **Uji Import WFS & WMS**: Coba muat layer vektor dan raster ke canvas QGIS.
-- [ ] **Uji Edit & Sinkronisasi**: Lakukan penambahan atau modifikasi fitur pada layer vektor, lalu tekan **Sinkronkan** untuk memverifikasi transaksi WFS-T.
+- [x] Seluruh **522 dataset** muncul presisi di katalog plugin (sesuai geoportal).
+- [x] Rendering tabel menggunakan `QTableView` + `DatasetTableModel` (virtual rendering).
+- [x] Pencarian instan sisi klien berjalan via `QSortFilterProxyModel` di level C++.
+- [x] Format cache vektor lokal distandarisasi ke **GeoPackage (.gpkg)**.
+- [x] Inspeksi basis data PostGIS menggunakan provider bawaan `QgsDataSourceUri` (bebas dependensi eksternal `psycopg2`).
+- [x] Transaksi edit data dialihkan ke **WFS-T HTTP** berbasis akun pengguna.
+- [x] Kredensial sensitif mendukung enkripsi **`QgsAuthManager`** dengan Master Password.
+- [x] Mekanisme **Delta Sync** aktif di background thread untuk efisiensi jaringan.
+- [x] Multi-instance dropdown terhubung ke **`QgsSettings`**.

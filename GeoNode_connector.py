@@ -227,6 +227,21 @@ class GeoNodeConnector:
             parent=self.iface.mainWindow(),
         )
 
+    def run_export_wizard(self):
+        """
+        Buka dialog wizard ekspor langsung dari menu atau toolbar QGIS.
+        """
+        from .ui.dialogs.upload_wizard_dialog import UploadWizardDialog
+        from .services.layer_service import LayerService
+        active_layer = self.iface.activeLayer() if self.iface else None
+        layer_service = self.dockwidget.layer_service if self.dockwidget else LayerService()
+        dlg = UploadWizardDialog(
+            layer=active_layer,
+            layer_service=layer_service,
+            parent=self.iface.mainWindow() if self.iface else None,
+        )
+        dlg.exec_()
+
     # ==============================================================
     # Dock Widget
     # ==============================================================

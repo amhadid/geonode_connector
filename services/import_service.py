@@ -30,6 +30,8 @@ from qgis.core import (
     QgsVectorLayer,
     QgsMapLayer,
     QgsFeatureRequest,
+    QgsVectorFileWriter,
+    QgsCoordinateTransformContext,
 )
 
 from ..models.layer import Layer
@@ -39,6 +41,7 @@ from ..utils.config import (
     GEOSERVER_ADMIN_USER,
     GEOSERVER_ADMIN_PASSWORD,
     PLUGIN_ROOT,
+    GEOPACKAGE_CACHE_DIR,
     SHAPEFILE_CACHE_DIR,
     GEOJSON_CACHE_DIR,
 )
@@ -200,6 +203,87 @@ class ImportService:
                 pass
             return ServiceResult.fail(
                 message=f"Terjadi kesalahan sistem saat import WFS: {str(e)}"
+            )
+
+    # ==========================================================
+    # GeoPackage (.gpkg) Standardized Vector Cache
+    # ==========================================================
+
+    def _create_geopackage_layer(self, layer: Layer) -> Optional[QgsVectorLayer]:
+        """
+        Membuat atau memuat layer vektor terstandarisasi GeoPackage (.gpkg) lokal.
+        Format GeoPackage berbasis SQLite dengan indeks R-Tree bawaan, tanpa batasan
+        2GB Shapefile atau limitasi nama kolom, terbaca native oleh mesin QGIS.
+        """
+        cache_base = GEOPACKAGE_CACHE_DIR
+        os.makedirs(cache_base, exist_ok=True)
+        safe_name = "".join(c for c in (layer.name or "layer") if c.isalnum() or c in "_-")
+        gpkg_file = os.path.join(cache_base, f"{safe_name}_{layer.pk or '0'}.gpkg")
+
+        # 1. Jika file .gpkg sudah ada di disk cache, langsung muat secara instan
+        if os.path.isfile(gpkg_file):
+            logger.info(f"Loading existing GeoPackage cache: {gpkg_file}")
+            qgs_layer = QgsVectorLayer(
+                f"{gpkg_file}|layername={safe_name}",
+                layer.title or layer.name,
+                "ogr"
+            )
+            if qgs_layer.isValid():
+                return qgs_layer
+
+        # 2. Jika belum ada, buat via stream vektor GeoNode dan simpan ke .gpkg
+        temp_src = self._create_geojson_layer(layer)
+        if temp_src and temp_src.isValid():
+            options = QgsVectorFileWriter.SaveVectorOptions()
+            options.driverName = "GPKG"
+            options.layerName = safe_name
+            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+
+            transform_context = (
+                self._project.transformContext()
+                if self._project
+                else QgsCoordinateTransformContext()
+            )
+
+            res, err_msg, new_path, new_layer_name = QgsVectorFileWriter.writeAsVectorFormatV3(
+                temp_src,
+                gpkg_file,
+                transform_context,
+                options
+            )
+
+            if res == QgsVectorFileWriter.NoError and os.path.isfile(gpkg_file):
+                logger.info(f"Successfully converted and cached to GeoPackage: {gpkg_file}")
+                qgs_layer = QgsVectorLayer(
+                    f"{gpkg_file}|layername={safe_name}",
+                    layer.title or layer.name,
+                    "ogr"
+                )
+                if qgs_layer.isValid():
+                    return qgs_layer
+            else:
+                logger.warning(f"GeoPackage write failed: {err_msg}. Using GeoJSON temp layer.")
+                return temp_src
+
+        return None
+
+    def import_geopackage(self, layer: Layer) -> ServiceResult:
+        """
+        Mengimpor layer vektor GeoNode sebagai GeoPackage (.gpkg) lokal ke canvas QGIS.
+        """
+        logger.info(f"Importing GeoPackage Layer: {layer.display_name}")
+        try:
+            qgs_layer = self._create_geopackage_layer(layer)
+            if qgs_layer and qgs_layer.isValid():
+                return self._validate_and_add(qgs_layer, layer, format_desc="GeoPackage (.gpkg) Vector")
+
+            return ServiceResult.fail(
+                message=f"Gagal memuat GeoPackage untuk layer '{layer.title}'."
+            )
+        except Exception as e:
+            logger.exception("Gagal melakukan import GeoPackage.")
+            return ServiceResult.fail(
+                message=f"Terjadi kesalahan saat import GeoPackage: {str(e)}"
             )
 
     # ==========================================================

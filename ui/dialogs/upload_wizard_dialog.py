@@ -10,6 +10,8 @@ Memungkinkan user memilih:
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any, Dict, List, Optional
 
 from qgis.core import QgsVectorLayer, QgsProject, QgsApplication
@@ -32,6 +34,9 @@ from qgis.PyQt.QtWidgets import (
     QFormLayout,
     QMessageBox,
     QScrollArea,
+    QFileDialog,
+    QCheckBox,
+    QSizePolicy,
 )
 
 from ...services.upload_service import upload_service
@@ -59,13 +64,14 @@ class UploadWizardDialog(QDialog):
         self.layer = layer
         self.layer_service = layer_service or LayerService()
         self.setWindowTitle("Upload Dataset & Kelola Metadata - GeoNode Connector")
-        self.resize(650, 600)
-        self.setMinimumSize(580, 520)
+        self.resize(750, 660)
+        self.setMinimumSize(680, 560)
 
         self._all_datasets = []
         self._current_step = 0
 
         self._setup_ui()
+        self._populate_qgis_layers()
         self._load_datasets_and_categories()
         self._prefill_from_layer()
 
@@ -158,7 +164,7 @@ class UploadWizardDialog(QDialog):
         layout.setContentsMargins(0, 4, 0, 8)
         layout.setSpacing(8)
 
-        steps = ["1. Pilihan Kategori", "2. Isian Metadata", "3. Upload & Selesai"]
+        steps = ["1. Sumber & Mode Ekspor", "2. Isian Metadata", "3. Upload & Selesai"]
         self.step_labels = []
 
         for i, name in enumerate(steps):
@@ -187,94 +193,399 @@ class UploadWizardDialog(QDialog):
                 lbl.setStyleSheet("color: #94A3B8; font-size: 8.5pt; font-weight: 500; padding: 4px 8px;")
 
     # ==========================================================
-    # Step 1: Mode Selection Page
+    # Step 1: Mode & Source Selection Page
     # ==========================================================
 
     def _create_step1_page(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(14)
 
-        desc = QLabel("Pilih apakah hasil editing layer akan memperbarui dataset lama atau dipublikasikan sebagai dataset baru.")
-        desc.setStyleSheet("color: #64748B; font-size: 9pt;")
+        desc = QLabel("Pilih sumber layer spasial dari proyek QGIS atau file dari komputer, lalu tentukan apakah ingin mempublikasikan sebagai dataset baru atau memperbarui dataset yang sudah ada.")
+        desc.setStyleSheet("color: #64748B; font-size: 8.5pt; border: none; background: transparent;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
-        # Mode Box
+        # ------------------------------------------------------
+        # Card 1: Sumber Data Spasial
+        # ------------------------------------------------------
+        src_box = QFrame()
+        src_box.setObjectName("srcBox")
+        src_box.setStyleSheet("""
+            QFrame#srcBox {
+                background: #FFFFFF;
+                border: 1.5px solid #E2E8F0;
+                border-radius: 10px;
+            }
+            QFrame#srcBox QLabel {
+                border: none;
+                background: transparent;
+            }
+            QFrame#srcBox QRadioButton {
+                color: #1E293B;
+                font-size: 8.5pt;
+                font-weight: 500;
+                border: none;
+                background: transparent;
+                spacing: 8px;
+            }
+            QFrame#srcBox QRadioButton::indicator {
+                width: 16px;
+                height: 16px;
+            }
+        """)
+        src_layout = QVBoxLayout(src_box)
+        src_layout.setContentsMargins(18, 16, 18, 16)
+        src_layout.setSpacing(12)
+
+        lbl_src_title = QLabel("📍 Sumber Layer Spasial")
+        lbl_src_title.setStyleSheet("font-weight: 700; font-size: 9.5pt; color: #0F172A; border: none; background: transparent;")
+        src_layout.addWidget(lbl_src_title)
+
+        self.btn_group_src = QButtonGroup(self)
+        self.radio_src_qgis = QRadioButton("Pilih dari Layer Kanvas QGIS")
+        self.radio_src_qgis.setChecked(True)
+        self.radio_src_file = QRadioButton("Pilih File Spasial dari Disk (.gpkg, .shp, .geojson)")
+        self.btn_group_src.addButton(self.radio_src_qgis)
+        self.btn_group_src.addButton(self.radio_src_file)
+
+        src_radio_row = QHBoxLayout()
+        src_radio_row.setSpacing(20)
+        src_radio_row.addWidget(self.radio_src_qgis)
+        src_radio_row.addWidget(self.radio_src_file)
+        src_radio_row.addStretch()
+        src_layout.addLayout(src_radio_row)
+
+        # Dropdown Layer QGIS
+        self.cmb_qgis_layers = QComboBox()
+        self.cmb_qgis_layers.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cmb_qgis_layers.setMinimumContentsLength(25)
+        self.cmb_qgis_layers.setStyleSheet("""
+            QComboBox {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 12px;
+                background: #FFFFFF;
+                color: #1E293B;
+                font-size: 9pt;
+            }
+            QComboBox:hover {
+                border-color: #94A3B8;
+            }
+            QComboBox:focus {
+                border-color: #10B981;
+            }
+        """)
+        self.cmb_qgis_layers.currentIndexChanged.connect(self._on_qgis_layer_selected)
+        src_layout.addWidget(self.cmb_qgis_layers)
+
+        # File Chooser Box
+        self.file_chooser_box = QWidget()
+        self.file_chooser_box.setStyleSheet("background: transparent; border: none;")
+        fc_layout = QHBoxLayout(self.file_chooser_box)
+        fc_layout.setContentsMargins(0, 0, 0, 0)
+        fc_layout.setSpacing(8)
+
+        self.txt_file_path = QLineEdit()
+        self.txt_file_path.setPlaceholderText("Pilih file GeoPackage, Shapefile, atau GeoJSON...")
+        self.txt_file_path.setReadOnly(True)
+        self.txt_file_path.setStyleSheet("""
+            QLineEdit {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 12px;
+                background: #F8FAFC;
+                color: #334155;
+                font-size: 8.5pt;
+            }
+        """)
+
+        self.btn_browse_file = QPushButton("Cari File...")
+        self.btn_browse_file.setIcon(QgsApplication.getThemeIcon("mActionFileOpen.svg"))
+        self.btn_browse_file.setCursor(Qt.PointingHandCursor)
+        self.btn_browse_file.setStyleSheet("""
+            QPushButton {
+                background: #FFFFFF;
+                color: #0F172A;
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-weight: 600;
+                font-size: 8.5pt;
+            }
+            QPushButton:hover {
+                background: #F1F5F9;
+                border-color: #94A3B8;
+            }
+        """)
+        self.btn_browse_file.clicked.connect(self._on_browse_file_clicked)
+
+        fc_layout.addWidget(self.txt_file_path, stretch=1)
+        fc_layout.addWidget(self.btn_browse_file)
+        self.file_chooser_box.hide()
+        src_layout.addWidget(self.file_chooser_box)
+
+        # Chip Ringkasan Layer Terpilih
+        self.lbl_layer_info = QLabel("Memuat informasi layer...")
+        self.lbl_layer_info.setObjectName("layerInfoChip")
+        self.lbl_layer_info.setWordWrap(True)
+        self.lbl_layer_info.setStyleSheet("""
+            QLabel#layerInfoChip {
+                background-color: #ECFDF5;
+                border: 1px solid #A7F3D0;
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: #065F46;
+                font-size: 8.5pt;
+            }
+        """)
+        src_layout.addWidget(self.lbl_layer_info)
+
+        layout.addWidget(src_box)
+        self.radio_src_qgis.toggled.connect(self._on_src_type_toggled)
+
+        # ------------------------------------------------------
+        # Card 2: Mode Publikasi ke GeoNode
+        # ------------------------------------------------------
         mode_box = QFrame()
+        mode_box.setObjectName("modeBox")
         mode_box.setStyleSheet("""
-            QFrame {
-                background: white;
-                border: 1px solid #E2E8F0;
-                border-radius: 8px;
-                padding: 14px;
+            QFrame#modeBox {
+                background: #FFFFFF;
+                border: 1.5px solid #E2E8F0;
+                border-radius: 10px;
+            }
+            QFrame#modeBox QLabel {
+                border: none;
+                background: transparent;
+            }
+            QFrame#modeBox QRadioButton {
+                color: #1E293B;
+                font-size: 9pt;
+                font-weight: 700;
+                border: none;
+                background: transparent;
+                spacing: 8px;
+            }
+            QFrame#modeBox QRadioButton::indicator {
+                width: 16px;
+                height: 16px;
             }
         """)
         mode_layout = QVBoxLayout(mode_box)
-        mode_layout.setSpacing(14)
+        mode_layout.setContentsMargins(18, 16, 18, 16)
+        mode_layout.setSpacing(12)
+
+        lbl_mode_title = QLabel("🚀 Tujuan Publikasi di GeoNode")
+        lbl_mode_title.setStyleSheet("font-weight: 700; font-size: 9.5pt; color: #0F172A; border: none; background: transparent;")
+        mode_layout.addWidget(lbl_mode_title)
 
         self.btn_group_mode = QButtonGroup(self)
 
-        # Radio 1: Updating Dataset Lama
-        self.radio_update = QRadioButton("Updating dataset lama sebelumnya")
-        self.radio_update.setStyleSheet("font-weight: bold; font-size: 9.5pt; color: #1E293B;")
-        self.btn_group_mode.addButton(self.radio_update)
-        mode_layout.addWidget(self.radio_update)
-
-        self.frame_update_details = QFrame()
-        layout_update = QFormLayout(self.frame_update_details)
-        layout_update.setContentsMargins(24, 0, 0, 0)
-        self.cmb_existing_datasets = QComboBox()
-        self.cmb_existing_datasets.setStyleSheet("padding: 6px; border: 1px solid #CBD5E1; border-radius: 4px; background: white;")
-        self.cmb_existing_datasets.currentIndexChanged.connect(self._on_existing_dataset_selected)
-        layout_update.addRow("Pilih Dataset GeoNode:", self.cmb_existing_datasets)
-        mode_layout.addWidget(self.frame_update_details)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color: #F1F5F9;")
-        mode_layout.addWidget(sep)
-
-        # Radio 2: Kategori Dataset Baru
-        self.radio_new = QRadioButton("Kategori dataset baru (Publish Baru)")
-        self.radio_new.setStyleSheet("font-weight: bold; font-size: 9.5pt; color: #1E293B;")
+        # Radio 1: Dataset Baru (Default)
+        self.radio_new = QRadioButton("Publikasikan sebagai Dataset Baru (Ekspor Baru)")
         self.btn_group_mode.addButton(self.radio_new)
         mode_layout.addWidget(self.radio_new)
 
-        self.frame_new_details = QFrame()
-        layout_new = QFormLayout(self.frame_new_details)
-        layout_new.setContentsMargins(24, 0, 0, 0)
-        layout_new.setSpacing(10)
+        self.frame_new_details = QWidget()
+        self.frame_new_details.setStyleSheet("background: transparent; border: none;")
+        layout_new = QVBoxLayout(self.frame_new_details)
+        layout_new.setContentsMargins(24, 4, 0, 8)
+        layout_new.setSpacing(8)
 
+        lbl_id = QLabel("Nama Layer Identifier (*):")
+        lbl_id.setStyleSheet("font-weight: 600; font-size: 8.5pt; color: #334155; border: none;")
         self.txt_new_identifier = QLineEdit()
-        self.txt_new_identifier.setPlaceholderText("contoh: sebaran_posko_yogyakarta_2026")
-        self.txt_new_identifier.setStyleSheet("padding: 6px; border: 1px solid #CBD5E1; border-radius: 4px; background: white;")
-        layout_new.addRow("Nama Layer (Identifier):", self.txt_new_identifier)
+        self.txt_new_identifier.setPlaceholderText("contoh: sebaran_fasilitas_kesehatan_2026")
+        self.txt_new_identifier.setStyleSheet("""
+            QLineEdit {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 12px;
+                background: #FFFFFF;
+                color: #1E293B;
+                font-size: 9pt;
+            }
+            QLineEdit:hover { border-color: #94A3B8; }
+            QLineEdit:focus { border-color: #10B981; }
+        """)
+        lbl_id_hint = QLabel("Hanya gunakan huruf kecil, angka, dan garis bawah tanpa spasi.")
+        lbl_id_hint.setStyleSheet("color: #94A3B8; font-size: 8pt; border: none;")
 
+        lbl_fmt = QLabel("Format Ekspor File (*):")
+        lbl_fmt.setStyleSheet("font-weight: 600; font-size: 8.5pt; color: #334155; border: none; margin-top: 4px;")
         self.cmb_format = QComboBox()
         self.cmb_format.addItems([
             "GeoPackage (.gpkg) - Direkomendasikan",
             "GeoJSON (.geojson)",
             "ESRI Shapefile (.shp)",
         ])
-        self.cmb_format.setStyleSheet("padding: 6px; border: 1px solid #CBD5E1; border-radius: 4px; background: white;")
-        layout_new.addRow("Format Upload:", self.cmb_format)
+        self.cmb_format.setStyleSheet("""
+            QComboBox {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 12px;
+                background: #FFFFFF;
+                color: #1E293B;
+                font-size: 9pt;
+            }
+            QComboBox:hover { border-color: #94A3B8; }
+            QComboBox:focus { border-color: #10B981; }
+        """)
 
+        layout_new.addWidget(lbl_id)
+        layout_new.addWidget(self.txt_new_identifier)
+        layout_new.addWidget(lbl_id_hint)
+        layout_new.addWidget(lbl_fmt)
+        layout_new.addWidget(self.cmb_format)
         mode_layout.addWidget(self.frame_new_details)
 
+        # Divider halus
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: #F1F5F9; border: none; max-height: 1px;")
+        mode_layout.addWidget(sep)
+
+        # Radio 2: Update Lama
+        self.radio_update = QRadioButton("Perbarui dataset yang sudah ada sebelumnya")
+        self.btn_group_mode.addButton(self.radio_update)
+        mode_layout.addWidget(self.radio_update)
+
+        self.frame_update_details = QWidget()
+        self.frame_update_details.setStyleSheet("background: transparent; border: none;")
+        layout_update = QVBoxLayout(self.frame_update_details)
+        layout_update.setContentsMargins(24, 4, 0, 8)
+        layout_update.setSpacing(8)
+
+        lbl_target = QLabel("Pilih Dataset Target di GeoNode (*):")
+        lbl_target.setStyleSheet("font-weight: 600; font-size: 8.5pt; color: #334155; border: none;")
+        self.cmb_existing_datasets = QComboBox()
+        self.cmb_existing_datasets.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cmb_existing_datasets.setMinimumContentsLength(25)
+        self.cmb_existing_datasets.setStyleSheet("""
+            QComboBox {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 12px;
+                background: #FFFFFF;
+                color: #1E293B;
+                font-size: 9pt;
+            }
+            QComboBox:hover { border-color: #94A3B8; }
+            QComboBox:focus { border-color: #10B981; }
+        """)
+        self.cmb_existing_datasets.currentIndexChanged.connect(self._on_existing_dataset_selected)
+
+        lbl_update_hint = QLabel("Fitur dan geometri layer akan disinkronkan ke dataset yang dipilih di server.")
+        lbl_update_hint.setStyleSheet("color: #94A3B8; font-size: 8pt; border: none;")
+
+        layout_update.addWidget(lbl_target)
+        layout_update.addWidget(self.cmb_existing_datasets)
+        layout_update.addWidget(lbl_update_hint)
+        mode_layout.addWidget(self.frame_update_details)
+
         layout.addWidget(mode_box)
+
+        # ------------------------------------------------------
+        # Card 3: Penyelarasan Style Simbologi (.sld)
+        # ------------------------------------------------------
+        style_box = QFrame()
+        style_box.setObjectName("styleBox")
+        style_box.setStyleSheet("""
+            QFrame#styleBox {
+                background: #FFFFFF;
+                border: 1.5px solid #E2E8F0;
+                border-radius: 10px;
+            }
+            QFrame#styleBox QLabel {
+                border: none;
+                background: transparent;
+            }
+            QFrame#styleBox QCheckBox {
+                color: #1E293B;
+                font-size: 8.5pt;
+                font-weight: 600;
+                border: none;
+                background: transparent;
+                spacing: 8px;
+            }
+        """)
+        style_layout = QVBoxLayout(style_box)
+        style_layout.setContentsMargins(18, 14, 18, 14)
+        style_layout.setSpacing(10)
+
+        lbl_style_title = QLabel("🎨 Penyelarasan Style Simbologi (.sld)")
+        lbl_style_title.setStyleSheet("font-weight: 700; font-size: 9.5pt; color: #0F172A; border: none;")
+        style_layout.addWidget(lbl_style_title)
+
+        self.chk_include_style = QCheckBox("Ikutkan style simbologi layer dari QGIS ke GeoNode (.sld)")
+        self.chk_include_style.setChecked(True)
+        self.chk_include_style.setToolTip("Simbologi warna, ikon, dan label dari QGIS akan diekspor sebagai file SLD dan disinkronkan ke GeoNode.")
+        style_layout.addWidget(self.chk_include_style)
+
+        style_hint = QLabel("Format OGC Styled Layer Descriptor (.sld) akan dibuat otomatis dari layer aktif di QGIS dan dipasang sebagai default style di GeoNode.")
+        style_hint.setStyleSheet("color: #64748B; font-size: 8pt; border: none;")
+        style_hint.setWordWrap(True)
+        style_layout.addWidget(style_hint)
+
+        btn_row = QHBoxLayout()
+        self.btn_export_sld = QPushButton("💾 Simpan Berkas .SLD ke Komputer...")
+        self.btn_export_sld.setCursor(Qt.PointingHandCursor)
+        self.btn_export_sld.setIcon(QgsApplication.getThemeIcon("mActionFileSave.svg"))
+        self.btn_export_sld.setStyleSheet("""
+            QPushButton {
+                background: #F8FAFC;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 8.5pt;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #EDF2F7;
+                color: #0F172A;
+            }
+        """)
+        self.btn_export_sld.clicked.connect(self._on_export_sld_clicked)
+        btn_row.addWidget(self.btn_export_sld)
+        btn_row.addStretch()
+        style_layout.addLayout(btn_row)
+
+        layout.addWidget(style_box)
         layout.addStretch()
 
-        self.radio_update.toggled.connect(self._on_mode_toggled)
-        self.radio_update.setChecked(True)
+        self.radio_new.toggled.connect(self._on_mode_radio_toggled)
+        self.radio_new.setChecked(True)
+        self.frame_update_details.hide()
 
-        return widget
+        scroll.setWidget(container)
+        return scroll
+
+    def _on_src_type_toggled(self, is_qgis: bool):
+        self.cmb_qgis_layers.setVisible(is_qgis)
+        self.file_chooser_box.setVisible(not is_qgis)
+
+    def _on_mode_radio_toggled(self, is_new: bool):
+        self.frame_new_details.setVisible(is_new)
+        self.frame_update_details.setVisible(not is_new)
+        if not is_new and hasattr(self, "cmb_existing_datasets"):
+            self._on_existing_dataset_selected(self.cmb_existing_datasets.currentIndex())
 
     def _on_mode_toggled(self, is_update: bool):
-        self.frame_update_details.setEnabled(is_update)
-        self.frame_new_details.setEnabled(not is_update)
-        if is_update:
-            self._on_existing_dataset_selected(self.cmb_existing_datasets.currentIndex())
+        self.radio_update.setChecked(is_update)
+        self.radio_new.setChecked(not is_update)
 
     # ==========================================================
     # Step 2: Metadata Input Page (Sprint 7)
@@ -283,9 +594,13 @@ class UploadWizardDialog(QDialog):
     def _create_step2_page(self) -> QWidget:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -294,80 +609,170 @@ class UploadWizardDialog(QDialog):
         desc.setStyleSheet("color: #64748B; font-size: 8.5pt;")
         layout.addWidget(desc)
 
+        # ------------------------------------------------------
+        # Card Form Metadata (Modernized layout)
+        # ------------------------------------------------------
         form_card = QFrame()
+        form_card.setObjectName("metadataCard")
         form_card.setStyleSheet("""
-            QFrame {
-                background: white;
-                border: 1px solid #E2E8F0;
-                border-radius: 8px;
-                padding: 14px;
+            QFrame#metadataCard {
+                background: #FFFFFF;
+                border: 1.5px solid #E2E8F0;
+                border-radius: 10px;
             }
-            QLineEdit, QTextEdit, QComboBox {
-                border: 1px solid #CBD5E1;
-                border-radius: 5px;
-                padding: 6px;
-                background: white;
+            QFrame#metadataCard QLabel {
+                border: none;
+                background: transparent;
+                color: #1E293B;
+                font-size: 8.5pt;
+                font-weight: 600;
             }
-            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+            QFrame#metadataCard QLineEdit,
+            QFrame#metadataCard QTextEdit,
+            QFrame#metadataCard QComboBox {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 7px 10px;
+                background: #FFFFFF;
+                color: #1E293B;
+                font-size: 9pt;
+            }
+            QFrame#metadataCard QLineEdit:hover,
+            QFrame#metadataCard QTextEdit:hover,
+            QFrame#metadataCard QComboBox:hover {
+                border-color: #94A3B8;
+            }
+            QFrame#metadataCard QLineEdit:focus,
+            QFrame#metadataCard QTextEdit:focus,
+            QFrame#metadataCard QComboBox:focus {
                 border-color: #10B981;
+                background: #FFFFFF;
             }
         """)
-        form_layout = QFormLayout(form_card)
-        form_layout.setSpacing(10)
+        card_layout = QVBoxLayout(form_card)
+        card_layout.setContentsMargins(20, 18, 20, 18)
+        card_layout.setSpacing(14)
 
-        # 1. Judul (Wajib)
+        # 1. Judul Dataset
+        v_title = QVBoxLayout()
+        v_title.setSpacing(4)
+        lbl_title = QLabel("Judul Dataset (*):")
         self.txt_title = QLineEdit()
-        self.txt_title.setPlaceholderText("Judul dataset yang mudah dipahami...")
-        form_layout.addRow("Judul Dataset (*):", self.txt_title)
+        self.txt_title.setPlaceholderText("Judul dataset resmi yang mudah dipahami...")
+        v_title.addWidget(lbl_title)
+        v_title.addWidget(self.txt_title)
+        card_layout.addLayout(v_title)
 
-        # 2. Abstrak (Wajib)
+        # 2. Abstrak / Deskripsi
+        v_abstract = QVBoxLayout()
+        v_abstract.setSpacing(4)
+        lbl_abstract = QLabel("Abstrak / Deskripsi Dataset (*):")
         self.txt_abstract = QTextEdit()
-        self.txt_abstract.setMaximumHeight(70)
-        self.txt_abstract.setPlaceholderText("Deskripsi ringkas mengenai isi dan cakupan data...")
-        form_layout.addRow("Abstrak / Deskripsi (*):", self.txt_abstract)
+        self.txt_abstract.setFixedHeight(68)
+        self.txt_abstract.setPlaceholderText("Deskripsi ringkas mengenai isi, cakupan wilayah, dan kegunaan data...")
+        v_abstract.addWidget(lbl_abstract)
+        v_abstract.addWidget(self.txt_abstract)
+        card_layout.addLayout(v_abstract)
 
-        # 3. Kategori Tema (GeoNode Categories)
+        # 3. Kategori Tema & Kata Kunci (2 Kolom berdampingan)
+        row_cat_kw = QHBoxLayout()
+        row_cat_kw.setSpacing(16)
+
+        v_cat = QVBoxLayout()
+        v_cat.setSpacing(4)
+        lbl_cat = QLabel("Kategori Tema (Topic Category):")
         self.cmb_category = QComboBox()
-        form_layout.addRow("Kategori Tema:", self.cmb_category)
+        self.cmb_category.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cmb_category.setMinimumContentsLength(20)
+        v_cat.addWidget(lbl_cat)
+        v_cat.addWidget(self.cmb_category)
+        row_cat_kw.addLayout(v_cat, stretch=1)
 
-        # 4. Kata Kunci (Keywords)
+        v_kw = QVBoxLayout()
+        v_kw.setSpacing(4)
+        lbl_kw = QLabel("Kata Kunci (Tags):")
         self.txt_keywords = QLineEdit()
-        self.txt_keywords.setPlaceholderText("Pisahkan dengan koma (contoh: kantor, yogya, fasilitas)")
-        form_layout.addRow("Kata Kunci (Tags):", self.txt_keywords)
+        self.txt_keywords.setPlaceholderText("contoh: kantor, yogya, fasilitas")
+        v_kw.addWidget(lbl_kw)
+        v_kw.addWidget(self.txt_keywords)
+        row_cat_kw.addLayout(v_kw, stretch=1)
 
-        # 5. Tujuan (Purpose)
+        card_layout.addLayout(row_cat_kw)
+
+        # 4. Tujuan Pembuatan (Purpose)
+        v_purpose = QVBoxLayout()
+        v_purpose.setSpacing(4)
+        lbl_purpose = QLabel("Tujuan Pembuatan (Purpose):")
         self.txt_purpose = QLineEdit()
-        self.txt_purpose.setPlaceholderText("Tujuan pembuatan atau pemanfaatan dataset...")
-        form_layout.addRow("Tujuan Pembuatan:", self.txt_purpose)
+        self.txt_purpose.setPlaceholderText("Tujuan pembuatan atau pemanfaatan dataset ini...")
+        v_purpose.addWidget(lbl_purpose)
+        v_purpose.addWidget(self.txt_purpose)
+        card_layout.addLayout(v_purpose)
 
-        # 6. Bahasa & Lisensi
-        lang_lic_row = QHBoxLayout()
+        # Divider garis halus
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setFixedHeight(1)
+        div.setStyleSheet("background-color: #F1F5F9; border: none; max-height: 1px;")
+        card_layout.addWidget(div)
+
+        # 5. Bahasa & Lisensi (2 Kolom berdampingan)
+        row_lang_lic = QHBoxLayout()
+        row_lang_lic.setSpacing(16)
+
+        v_lang = QVBoxLayout()
+        v_lang.setSpacing(4)
+        lbl_lang = QLabel("Bahasa Metadata:")
         self.cmb_language = QComboBox()
+        self.cmb_language.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.cmb_language.addItems(["ind (Bahasa Indonesia)", "eng (English)"])
+        v_lang.addWidget(lbl_lang)
+        v_lang.addWidget(self.cmb_language)
+        row_lang_lic.addLayout(v_lang, stretch=1)
 
+        v_lic = QVBoxLayout()
+        v_lic.setSpacing(4)
+        lbl_lic = QLabel("Lisensi Data:")
         self.cmb_license = QComboBox()
+        self.cmb_license.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         for lic in metadata_service.get_licenses():
             self.cmb_license.addItem(lic["name"], lic["identifier"])
+        v_lic.addWidget(lbl_lic)
+        v_lic.addWidget(self.cmb_license)
+        row_lang_lic.addLayout(v_lic, stretch=1)
 
-        lang_lic_row.addWidget(self.cmb_language, stretch=1)
-        lang_lic_row.addWidget(self.cmb_license, stretch=1)
-        form_layout.addRow("Bahasa / Lisensi:", lang_lic_row)
+        card_layout.addLayout(row_lang_lic)
 
-        # 7. Frekuensi Pembaruan & Representasi Spasial
-        freq_repr_row = QHBoxLayout()
+        # 6. Frekuensi Pembaruan & Representasi Spasial (2 Kolom berdampingan)
+        row_freq_spat = QHBoxLayout()
+        row_freq_spat.setSpacing(16)
+
+        v_freq = QVBoxLayout()
+        v_freq.setSpacing(4)
+        lbl_maint = QLabel("Frekuensi Pembaruan:")
         self.cmb_maintenance = QComboBox()
+        self.cmb_maintenance.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         for k, v in metadata_service.get_maintenance_frequencies():
             self.cmb_maintenance.addItem(v, k)
+        v_freq.addWidget(lbl_maint)
+        v_freq.addWidget(self.cmb_maintenance)
+        row_freq_spat.addLayout(v_freq, stretch=1)
 
+        v_spat = QVBoxLayout()
+        v_spat.setSpacing(4)
+        lbl_spat = QLabel("Representasi Spasial:")
         self.cmb_spatial_repr = QComboBox()
+        self.cmb_spatial_repr.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         for k, v in metadata_service.get_spatial_representations():
             self.cmb_spatial_repr.addItem(v, k)
+        v_spat.addWidget(lbl_spat)
+        v_spat.addWidget(self.cmb_spatial_repr)
+        row_freq_spat.addLayout(v_spat, stretch=1)
 
-        freq_repr_row.addWidget(self.cmb_maintenance, stretch=1)
-        freq_repr_row.addWidget(self.cmb_spatial_repr, stretch=1)
-        form_layout.addRow("Frekuensi / Tipe:", freq_repr_row)
+        card_layout.addLayout(row_freq_spat)
 
         layout.addWidget(form_card)
+        layout.addStretch()
         scroll.setWidget(widget)
         return scroll
 
@@ -391,12 +796,17 @@ class UploadWizardDialog(QDialog):
 
         # Progress Card
         prog_card = QFrame()
+        prog_card.setObjectName("progCard")
         prog_card.setStyleSheet("""
-            QFrame {
+            QFrame#progCard {
                 background: white;
                 border: 1px solid #E2E8F0;
                 border-radius: 8px;
                 padding: 16px;
+            }
+            QFrame#progCard QLabel {
+                border: none;
+                background: transparent;
             }
         """)
         prog_layout = QVBoxLayout(prog_card)
@@ -438,6 +848,95 @@ class UploadWizardDialog(QDialog):
     # ==========================================================
     # Logic & Data Population
     # ==========================================================
+
+    def _populate_qgis_layers(self):
+        """Memuat seluruh vector layer dari kanvas proyek QGIS aktif."""
+        if not hasattr(self, "cmb_qgis_layers"):
+            return
+
+        self.cmb_qgis_layers.blockSignals(True)
+        self.cmb_qgis_layers.clear()
+
+        project = QgsProject.instance()
+        map_layers = project.mapLayers().values()
+        vector_layers = [l for l in map_layers if isinstance(l, QgsVectorLayer) and l.isValid()]
+
+        if not vector_layers:
+            self.cmb_qgis_layers.addItem("- Tidak ada layer vektor aktif di kanvas QGIS -", None)
+            self.cmb_qgis_layers.setEnabled(False)
+            self.radio_src_file.setChecked(True)
+            self._on_src_type_toggled(False)
+        else:
+            self.cmb_qgis_layers.setEnabled(True)
+            selected_idx = 0
+            for i, lyr in enumerate(vector_layers):
+                feat_count = lyr.featureCount()
+                geom_type = lyr.geometryType()
+                geom_name = ["Titik", "Garis", "Poligon", "Tabel", "Lainnya"][min(int(geom_type), 4)]
+                label = f"{lyr.name()} [{geom_name}, {feat_count} fitur]"
+                self.cmb_qgis_layers.addItem(label, lyr)
+                if self.layer and self.layer.id() == lyr.id():
+                    selected_idx = i
+
+            self.cmb_qgis_layers.setCurrentIndex(selected_idx)
+            if not self.layer and vector_layers:
+                self.layer = vector_layers[selected_idx]
+
+        self.cmb_qgis_layers.blockSignals(False)
+        self._update_layer_info()
+
+    def _on_qgis_layer_selected(self, index: int):
+        if index < 0 or not self.cmb_qgis_layers.isEnabled():
+            return
+        lyr = self.cmb_qgis_layers.itemData(index)
+        if lyr and isinstance(lyr, QgsVectorLayer):
+            self.layer = lyr
+            self._update_layer_info()
+            self._prefill_from_layer()
+
+    def _on_browse_file_clicked(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Pilih File Spasial untuk Diekspor ke GeoNode",
+            "",
+            "File Spasial (*.gpkg *.shp *.geojson *.json);;GeoPackage (*.gpkg);;ESRI Shapefile (*.shp);;GeoJSON (*.geojson *.json)",
+        )
+        if not file_path:
+            return
+
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        vlayer = QgsVectorLayer(file_path, base_name, "ogr")
+        if not vlayer.isValid():
+            QMessageBox.warning(self, "File Tidak Valid", f"Tidak dapat membaca data vektor dari file:\n{file_path}")
+            return
+
+        self.layer = vlayer
+        self.txt_file_path.setText(file_path)
+        self._update_layer_info()
+        self._prefill_from_layer()
+
+    def _update_layer_info(self):
+        if not hasattr(self, "lbl_layer_info"):
+            return
+
+        if not self.layer or not self.layer.isValid():
+            self.lbl_layer_info.setText("Belum ada layer yang dipilih.")
+            self.lbl_layer_info.setStyleSheet("color: #94A3B8; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 5px; padding: 6px 12px; font-size: 8.5pt;")
+            return
+
+        name = self.layer.name()
+        count = self.layer.featureCount()
+        geom = self.layer.geometryType()
+        geom_str = ["Point", "LineString", "Polygon", "Table", "Unknown"][min(int(geom), 4)]
+        crs_auth = self.layer.crs().authid() or "Tidak diketahui"
+
+        self.lbl_layer_info.setText(
+            f"<b>✔ Layer Terpilih:</b> {name}<br>"
+            f"• <b>Tipe Geometri:</b> {geom_str} &nbsp;|&nbsp; "
+            f"<b>Fitur:</b> {count} &nbsp;|&nbsp; "
+            f"<b>CRS:</b> {crs_auth}"
+        )
+        self.lbl_layer_info.setStyleSheet("color: #065F46; background: #ECFDF5; border: 1.5px solid #A7F3D0; border-radius: 6px; padding: 8px 12px; font-size: 8.5pt; font-weight: 500;")
 
     def _load_datasets_and_categories(self):
         """Memuat daftar dataset GeoNode dan kategori tema."""
@@ -486,12 +985,14 @@ class UploadWizardDialog(QDialog):
     def _prefill_from_layer(self):
         """Mengisi nilai awal form dari layer aktif."""
         if not self.layer:
+            self._update_layer_info()
             return
 
         name = self.layer.name()
         self.txt_title.setText(name.replace("_", " ").title())
         self.txt_new_identifier.setText("".join(c for c in name.lower() if c.isalnum() or c == "_"))
-        self.txt_abstract.setText(f"Dataset hasil pembaruan dari layer {name} di QGIS.")
+        self.txt_abstract.setText(f"Dataset {name} yang diekspor dan dikelola melalui GeoNode Connector QGIS.")
+        self._update_layer_info()
 
         # Cek apakah layer ini cocok dengan dataset yang ada di GeoNode
         clean_layer_name = "".join(c for c in name.lower() if c.isalnum() or c == "_")
@@ -501,6 +1002,7 @@ class UploadWizardDialog(QDialog):
             if m_path:
                 layer_pk = m_path.group(2)
 
+        is_match = False
         for i in range(self.cmb_existing_datasets.count()):
             ds = self.cmb_existing_datasets.itemData(i)
             if not ds:
@@ -510,7 +1012,12 @@ class UploadWizardDialog(QDialog):
             ):
                 self.cmb_existing_datasets.setCurrentIndex(i)
                 self.radio_update.setChecked(True)
+                is_match = True
                 return
+
+        # Jika bukan layer dari GeoNode (layer baru dari QGIS/file), aktifkan Publish Baru
+        if not is_match:
+            self.radio_new.setChecked(True)
 
     def _on_existing_dataset_selected(self, index: int):
         if index < 0 or index >= self.cmb_existing_datasets.count():
@@ -520,7 +1027,9 @@ class UploadWizardDialog(QDialog):
             return
 
         # Muat metadata dataset terpilih ke form Step 2
-        self.txt_title.setText(ds.title or ds.name)
+        raw_title = ds.title or ds.name or ""
+        clean_title = raw_title.replace("_", " ").title() if ("_" in raw_title and " " not in raw_title) else raw_title
+        self.txt_title.setText(clean_title)
         if ds.abstract and ds.abstract.lower() != "no abstract provided":
             self.txt_abstract.setText(ds.abstract)
         elif not self.txt_abstract.toPlainText().strip():
@@ -608,6 +1117,32 @@ class UploadWizardDialog(QDialog):
     # Upload Execution
     # ==========================================================
 
+    def _on_export_sld_clicked(self):
+        """Menyimpan file .sld layer terpilih ke lokasi lokal di komputer."""
+        if not self.layer or not self.layer.isValid():
+            QMessageBox.warning(self, "Peringatan", "Silakan pilih layer spasial yang valid terlebih dahulu.")
+            return
+
+        safe_name = "".join(c for c in self.layer.name().lower() if c.isalnum() or c == "_") or "style"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Simpan Berkas SLD Simbologi QGIS",
+            f"{safe_name}.sld",
+            "Styled Layer Descriptor (*.sld);;Semua Berkas (*.*)",
+        )
+        if file_path:
+            from ...services.style_service import style_service
+            ok, res = style_service.export_sld_from_layer(self.layer, output_path=file_path)
+            if ok:
+                QMessageBox.information(
+                    self,
+                    "Berhasil",
+                    f"Berkas style .sld berhasil disimpan ke:\n{file_path}\n\n"
+                    "Berkas ini siap digunakan atau diimpor ke GeoServer / GeoNode.",
+                )
+            else:
+                QMessageBox.critical(self, "Gagal", f"Gagal mengekspor file SLD:\n{res}")
+
     def _start_upload_process(self):
         if not self.layer:
             QMessageBox.warning(self, "Peringatan", "Layer tidak ditemukan di QGIS.")
@@ -619,6 +1154,7 @@ class UploadWizardDialog(QDialog):
         self.txt_log.clear()
 
         meta = self._collect_metadata()
+        include_style = self.chk_include_style.isChecked() if hasattr(self, "chk_include_style") else True
 
         def update_progress(pct: int, msg: str):
             self.progress_bar.setValue(pct)
@@ -641,6 +1177,7 @@ class UploadWizardDialog(QDialog):
                 target_pk=ds.pk,
                 target_name=ds.name,
                 metadata_dict=meta,
+                include_style=include_style,
                 progress_callback=update_progress,
             )
         else:
@@ -651,6 +1188,7 @@ class UploadWizardDialog(QDialog):
                 dataset_name=self.txt_new_identifier.text().strip(),
                 output_format=fmt,
                 metadata_dict=meta,
+                include_style=include_style,
                 progress_callback=update_progress,
             )
 

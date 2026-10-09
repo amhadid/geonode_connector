@@ -13,42 +13,96 @@ import urllib.request
 import urllib.error
 from typing import Optional
 
-from qgis.PyQt.QtCore import QSettings
+from qgis.core import QgsSettings
 from ...utils.logger import get_logger
 from ...models.session import session
+from ...utils.config import DEFAULT_SERVER
 
 logger = get_logger(__name__)
+
+DEFAULT_SERVER_PRESETS = [
+    "https://geonode-beta.jogjakota.go.id",
+    "https://geoportal.jogjakota.go.id",
+    "http://localhost:8000",
+]
 
 
 class ServerController:
     """
-    Controller konfigurasi server & health-check koneksi.
+    Controller konfigurasi server & health-check koneksi dengan dukungan multi-instance via QgsSettings.
     """
 
     def __init__(self, widget, login_widget=None):
         self.widget = widget
         self.login_widget = login_widget
+        self._updating_combo = False
         self.initialize()
 
     def initialize(self):
         self.widget.btn_save.clicked.connect(self.save)
         self.widget.btn_test.clicked.connect(self.test_connection)
+        if hasattr(self.widget, "server_combo"):
+            self.widget.server_combo.currentIndexChanged.connect(self._on_server_combo_changed)
         self.load_server()
 
+    def _on_server_combo_changed(self, index: int):
+        """Saat user memilih preset dari combo box, sinkronkan ke input URL."""
+        if self._updating_combo or not hasattr(self.widget, "server_combo"):
+            return
+
+        selected_data = self.widget.server_combo.currentData()
+        if selected_data:
+            self.widget.url.setText(selected_data)
+
     def load_server(self):
-        """Memuat URL server yang tersimpan dari session atau QSettings."""
-        settings = QSettings()
-        saved_url = settings.value("GeoNodeConnector/server_url", session.server_url or "http://localhost")
+        """Memuat daftar server dan server aktif dari QgsSettings."""
+        settings = QgsSettings()
+        saved_url = settings.value("GeoNodeConnector/server_url", session.server_url or DEFAULT_SERVER or "http://localhost")
         saved_timeout = settings.value("GeoNodeConnector/timeout", 30, type=int)
         saved_ssl = settings.value("GeoNodeConnector/verify_ssl", False, type=bool)
 
-        if saved_url:
-            self.widget.url.setText(str(saved_url))
+        raw_list = settings.value("GeoNodeConnector/server_list", DEFAULT_SERVER_PRESETS)
+        if isinstance(raw_list, str):
+            try:
+                server_list = json.loads(raw_list)
+            except Exception:
+                server_list = [s.strip() for s in raw_list.split(",") if s.strip()]
+        elif isinstance(raw_list, list):
+            server_list = list(raw_list)
+        else:
+            server_list = list(DEFAULT_SERVER_PRESETS)
+
+        # Pastikan server aktif ada dalam list
+        if saved_url and saved_url not in server_list:
+            server_list.insert(0, str(saved_url))
+
+        self.widget.url.setText(str(saved_url))
         self.widget.timeout.setValue(saved_timeout)
         self.widget.ssl.setChecked(saved_ssl)
 
+        # Populate combo box
+        if hasattr(self.widget, "server_combo"):
+            self._updating_combo = True
+            self.widget.server_combo.clear()
+            for s_url in server_list:
+                s_url = str(s_url).strip()
+                label = s_url
+                if "beta" in s_url.lower():
+                    label = f"GeoNode Beta ({s_url})"
+                elif "geoportal" in s_url.lower():
+                    label = f"GeoNode Produksi ({s_url})"
+                elif "localhost" in s_url.lower():
+                    label = f"GeoNode Lokal ({s_url})"
+                self.widget.server_combo.addItem(label, s_url)
+
+            # Pilih server yang sedang aktif
+            idx = self.widget.server_combo.findData(str(saved_url))
+            if idx >= 0:
+                self.widget.server_combo.setCurrentIndex(idx)
+            self._updating_combo = False
+
     def save(self):
-        """Menyimpan konfigurasi server ke session dan QSettings."""
+        """Menyimpan konfigurasi server ke session dan QgsSettings serta memperbarui daftar server."""
         raw_url = self.widget.url.text().strip()
         if not raw_url:
             self.widget.show_error("URL Tidak Boleh Kosong", "Silakan masukkan URL GeoNode yang valid.")
@@ -63,10 +117,37 @@ class ServerController:
 
         session.server_url = raw_url
 
-        settings = QSettings()
+        settings = QgsSettings()
         settings.setValue("GeoNodeConnector/server_url", raw_url)
         settings.setValue("GeoNodeConnector/timeout", timeout)
         settings.setValue("GeoNodeConnector/verify_ssl", verify_ssl)
+
+        # Update server_list di QgsSettings
+        raw_list = settings.value("GeoNodeConnector/server_list", DEFAULT_SERVER_PRESETS)
+        if isinstance(raw_list, list):
+            server_list = list(raw_list)
+        elif isinstance(raw_list, str):
+            try:
+                server_list = json.loads(raw_list)
+            except Exception:
+                server_list = [s.strip() for s in raw_list.split(",") if s.strip()]
+        else:
+            server_list = list(DEFAULT_SERVER_PRESETS)
+
+        if raw_url not in server_list:
+            server_list.insert(0, raw_url)
+            settings.setValue("GeoNodeConnector/server_list", server_list)
+
+        # Sync combo box
+        if hasattr(self.widget, "server_combo"):
+            self._updating_combo = True
+            idx = self.widget.server_combo.findData(raw_url)
+            if idx < 0:
+                self.widget.server_combo.insertItem(0, raw_url, raw_url)
+                self.widget.server_combo.setCurrentIndex(0)
+            else:
+                self.widget.server_combo.setCurrentIndex(idx)
+            self._updating_combo = False
 
         # Sync to login form if available
         if self.login_widget and hasattr(self.login_widget, "server"):
@@ -75,7 +156,7 @@ class ServerController:
         logger.info(f"Server configuration saved: {raw_url} (timeout={timeout}s, ssl={verify_ssl})")
         self.widget.show_success(
             "Konfigurasi Berhasil Disimpan",
-            f"URL server aktif diatur ke: {raw_url}. Form login telah diselaraskan."
+            f"URL server aktif diatur ke: {raw_url}. Tersimpan di QgsSettings."
         )
 
     def test_connection(self):

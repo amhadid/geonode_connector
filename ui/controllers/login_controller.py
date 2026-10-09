@@ -85,6 +85,12 @@ class LoginController(QObject):
         if hasattr(self.widget, "username") and hasattr(self.widget.username, "returnPressed"):
             self.widget.username.returnPressed.connect(self.login)
 
+        from qgis.core import QgsSettings
+        settings = QgsSettings()
+        saved_server = settings.value("GeoNodeConnector/server_url", "")
+        if saved_server and hasattr(self.widget, "server"):
+            self.widget.server.setText(str(saved_server))
+
     # ==========================================================
     # Helper
     # ==========================================================

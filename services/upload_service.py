@@ -32,6 +32,7 @@ from ..models.session import session
 from ..services.activity_service import activity_service
 from ..services.metadata_service import metadata_service
 from ..services.sync_service import sync_service
+from ..services.style_service import style_service
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,9 +56,10 @@ class UploadService:
         layer: QgsMapLayer,
         output_format: str = "GPKG",
         custom_name: str = "",
+        include_sld: bool = True,
     ) -> Dict[str, str]:
         """
-        Mengekspor layer QGIS ke file lokal sementara.
+        Mengekspor layer QGIS ke file lokal sementara (disertai file .sld).
 
         Parameters
         ----------
@@ -67,16 +69,20 @@ class UploadService:
             'GPKG', 'GeoJSON', 'ESRI Shapefile'
         custom_name : str
             Nama dasar file.
+        include_sld : bool
+            Apakah menyertakan file style .sld.
 
         Returns
         -------
         Dict[str, str]
-            File map untuk diunggah (misal {'base_file': path, ...}).
+            File map untuk diunggah (misal {'base_file': path, 'sld_file': path, ...}).
         """
         temp_dir = tempfile.mkdtemp(prefix="geonode_upload_")
         base_name = "".join(c for c in (custom_name or layer.name()).lower() if c.isalnum() or c == "_")
         if not base_name:
             base_name = "dataset"
+
+        file_map: Dict[str, str] = {}
 
         if isinstance(layer, QgsVectorLayer):
             transform_context = QgsProject.instance().transformContext()
@@ -90,8 +96,9 @@ class UploadService:
                 res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, out_path, transform_context, save_options)
                 err, msg = res[0], res[1]
                 if err == QgsVectorFileWriter.NoError:
-                    return {"base_file": out_path, "_temp_dir": temp_dir}
-                raise RuntimeError(f"Gagal ekspor ke GeoPackage: {msg}")
+                    file_map = {"base_file": out_path, "_temp_dir": temp_dir}
+                else:
+                    raise RuntimeError(f"Gagal ekspor ke GeoPackage: {msg}")
 
             elif "GEOJSON" in fmt_upper or "JSON" in fmt_upper:
                 save_options.driverName = "GeoJSON"
@@ -99,8 +106,9 @@ class UploadService:
                 res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, out_path, transform_context, save_options)
                 err, msg = res[0], res[1]
                 if err == QgsVectorFileWriter.NoError:
-                    return {"base_file": out_path, "_temp_dir": temp_dir}
-                raise RuntimeError(f"Gagal ekspor ke GeoJSON: {msg}")
+                    file_map = {"base_file": out_path, "_temp_dir": temp_dir}
+                else:
+                    raise RuntimeError(f"Gagal ekspor ke GeoJSON: {msg}")
 
             else:
                 # Shapefile
@@ -114,7 +122,6 @@ class UploadService:
                         p = os.path.join(temp_dir, f"{base_name}{ext}")
                         if os.path.isfile(p) and os.path.getsize(p) > 0:
                             file_map[f"{ext[1:]}_file"] = p
-                    # Pastikan cpg memiliki isi (> 0 bytes) untuk menghindari error GeoNode 'application/x-empty'
                     cpg_p = os.path.join(temp_dir, f"{base_name}.cpg")
                     if os.path.isfile(cpg_p):
                         if os.path.getsize(cpg_p) == 0:
@@ -125,8 +132,18 @@ class UploadService:
                                 pass
                         if os.path.getsize(cpg_p) > 0:
                             file_map["cpg_file"] = cpg_p
-                    return file_map
-                raise RuntimeError(f"Gagal ekspor ke Shapefile: {msg}")
+                else:
+                    raise RuntimeError(f"Gagal ekspor ke Shapefile: {msg}")
+
+            # Ekspor style SLD jika diminta
+            if include_sld:
+                sld_target = os.path.join(temp_dir, f"{base_name}.sld")
+                ok_sld, sld_path = style_service.export_sld_from_layer(layer, output_path=sld_target)
+                if ok_sld and os.path.isfile(sld_path) and os.path.getsize(sld_path) > 0:
+                    file_map["sld_file"] = sld_path
+                    logger.info(f"File SLD berhasil disertakan: {sld_path}")
+
+            return file_map
 
         raise ValueError("Format layer tidak didukung untuk ekspor.")
 
@@ -140,13 +157,15 @@ class UploadService:
         target_pk: int | str,
         target_name: str,
         metadata_dict: Dict[str, Any],
+        include_style: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> ServiceResult:
         """
         Memperbarui dataset yang sudah ada sebelumnya di GeoNode.
         1. Sinkronisasi data fitur dan skema ke basis data GeoNode.
         2. Memperbarui metadata ISO 19115 via REST API.
-        3. Memuat ulang katalog GeoServer dan merefresh GeoNode updatelayers.
+        3. Menyelaraskan style simbologi (.sld) ke GeoServer & GeoNode.
+        4. Memuat ulang katalog GeoServer dan merefresh GeoNode updatelayers.
         """
         try:
             if progress_callback:
@@ -168,15 +187,23 @@ class UploadService:
                     return ServiceResult.fail(message=f"Gagal sinkronisasi data: {sync_res.message}")
 
             if progress_callback:
-                progress_callback(65, "Menyimpan perubahan metadata ke GeoNode...")
+                progress_callback(60, "Menyimpan perubahan metadata ke GeoNode...")
 
             # 3. Update Metadata melalui REST API
             meta_res = metadata_service.update_metadata(target_pk, metadata_dict)
             if not meta_res.success:
                 logger.warning(f"Metadata update warning: {meta_res.message}")
 
+            # 4. Sinkronisasi Style SLD jika diminta
+            if include_style:
+                if progress_callback:
+                    progress_callback(78, "Menyelaraskan style simbologi (.sld) ke GeoNode...")
+                style_res = style_service.sync_sld_to_geoserver(layer, target_name, workspace="geonode")
+                if not style_res.success:
+                    logger.warning(f"Penyelarasan style SLD catatan: {style_res.message}")
+
             if progress_callback:
-                progress_callback(85, "Menyegarkan katalog GeoServer & GeoNode...")
+                progress_callback(90, "Menyegarkan katalog GeoServer & GeoNode...")
 
             sync_service._reload_geoserver_catalog()
             sync_service._trigger_geonode_updatelayers(target_name)
@@ -188,7 +215,7 @@ class UploadService:
             activity_service.log(
                 category="update",
                 username=self._session.username or "admin",
-                description=f"Dataset '{title}' (ID: {target_pk}) berhasil diperbarui dan disinkronkan.",
+                description=f"Dataset '{title}' (ID: {target_pk}) berhasil diperbarui dan disinkronkan beserta stylenya.",
             )
 
             status_msg = f"Dataset '{title}' berhasil diperbarui di GeoNode beserta metadatanya."
@@ -214,15 +241,16 @@ class UploadService:
         dataset_name: str,
         output_format: str,
         metadata_dict: Dict[str, Any],
+        include_style: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> ServiceResult:
         """
         Mengunggah layer sebagai dataset baru di GeoNode.
         1. Validasi metadata.
-        2. Ekspor layer ke format yang didukung (GeoPackage/GeoJSON/Shapefile).
+        2. Ekspor layer ke format yang didukung (GeoPackage/GeoJSON/Shapefile) beserta file .sld.
         3. Upload ke GeoNode Importer (/uploads/upload).
         4. Polling proses hingga selesai (status: finished).
-        5. Mengatur metadata lengkap pada dataset baru.
+        5. Mengatur metadata lengkap dan menyelaraskan style simbologi (.sld).
         """
         temp_dir = None
         try:
@@ -241,8 +269,8 @@ class UploadService:
             if progress_callback:
                 progress_callback(25, f"Mengekspor layer ke format {output_format}...")
 
-            # 2. Ekspor ke file
-            file_map = self.export_layer(layer, output_format, custom_name=clean_name)
+            # 2. Ekspor ke file (sertakan SLD jika diminta)
+            file_map = self.export_layer(layer, output_format, custom_name=clean_name, include_sld=include_style)
             temp_dir = file_map.pop("_temp_dir", None)
 
             if progress_callback:
@@ -271,7 +299,7 @@ class UploadService:
                 status = status_data.get("status")
                 step = status_data.get("step", "")
                 if progress_callback:
-                    pct = min(90, 60 + int(i * 1.2))
+                    pct = min(88, 60 + int(i * 1.2))
                     progress_callback(pct, f"Proses importer: {status or step}...")
 
                 if status == "finished":
@@ -286,12 +314,20 @@ class UploadService:
                     return ServiceResult.fail(message=f"Importer GeoNode gagal: {err}")
 
             if progress_callback:
-                progress_callback(92, "Menyimpan metadata lengkap...")
+                progress_callback(90, "Menyimpan metadata lengkap...")
 
             # 5. Terapkan metadata ke dataset baru jika pk berhasil didapat
             if new_resource_pk:
                 metadata_service.update_metadata(new_resource_pk, metadata_dict)
                 logger.info(f"Metadata berhasil diterapkan pada dataset baru ID: {new_resource_pk}")
+
+            # 6. Pastikan style SLD terpasang sebagai defaultStyle di GeoServer & GeoNode
+            if include_style:
+                if progress_callback:
+                    progress_callback(95, "Memastikan style simbologi (.sld) aktif di GeoNode...")
+                style_res = style_service.sync_sld_to_geoserver(layer, clean_name, workspace="geonode")
+                if not style_res.success:
+                    logger.warning(f"Style SLD upload catatan: {style_res.message}")
 
             if progress_callback:
                 progress_callback(100, "Dataset baru berhasil dipublikasikan!")
@@ -300,7 +336,7 @@ class UploadService:
             activity_service.log(
                 category="upload",
                 username=self._session.username or "admin",
-                description=f"Dataset baru '{title}' berhasil diupload dan dipublikasikan di GeoNode.",
+                description=f"Dataset baru '{title}' berhasil diupload dan dipublikasikan di GeoNode beserta stylenya.",
             )
 
             return ServiceResult.ok(

@@ -45,6 +45,8 @@ class ImportController:
         """
         self.widget.importWmsRequested.connect(self.handle_import_wms)
         self.widget.importWfsRequested.connect(self.handle_import_wfs)
+        if hasattr(self.widget, "importGpkgRequested"):
+            self.widget.importGpkgRequested.connect(self.handle_import_gpkg)
         if hasattr(self.widget, "importGeoJsonRequested"):
             self.widget.importGeoJsonRequested.connect(self.handle_import_geojson)
         if hasattr(self.widget, "importShapefileRequested"):
@@ -57,6 +59,10 @@ class ImportController:
     def handle_import_wfs(self, pk: str) -> None:
         """Handler untuk permintaan import WFS."""
         self._execute_import(pk, service_type="WFS")
+
+    def handle_import_gpkg(self, pk: str) -> None:
+        """Handler untuk permintaan import GeoPackage (.gpkg)."""
+        self._execute_import(pk, service_type="GEOPACKAGE")
 
     def handle_import_geojson(self, pk: str) -> None:
         """Handler untuk permintaan import GeoJSON."""
@@ -93,6 +99,8 @@ class ImportController:
             result = self.import_service.import_wms(layer)
         elif service_type == "WFS":
             result = self.import_service.import_wfs(layer)
+        elif service_type in ("GPKG", "GEOPACKAGE"):
+            result = self.import_service.import_geopackage(layer)
         elif service_type == "GEOJSON":
             result = self.import_service.import_geojson(layer)
         elif service_type == "SHAPEFILE":

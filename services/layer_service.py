@@ -18,13 +18,19 @@ Seluruh komunikasi REST dilakukan oleh DatasetAPI.
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+import os
+from typing import Any, Optional
 
 from ..api.dataset import DatasetAPI
 from ..models.layer import Layer
+from ..utils.config import CACHE_DIR
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+DATASETS_CACHE_FILE = os.path.join(CACHE_DIR, "datasets_cache.json")
+
 
 class LayerService:
     """
@@ -52,6 +58,62 @@ class LayerService:
         self._loaded: bool = False
 
     # ==========================================================
+    # Disk Cache
+    # ==========================================================
+
+    def load_disk_cache(self) -> list[Layer]:
+        """
+        Memuat dataset dari file cache lokal (sangat cepat, <0.05s).
+        """
+        if not os.path.isfile(DATASETS_CACHE_FILE):
+            return []
+
+        try:
+            with open(DATASETS_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if isinstance(data, list) and data:
+                layers = [Layer.from_dict(item) for item in data if isinstance(item, dict)]
+                if layers:
+                    self._layers = layers
+                    self._loaded = True
+                    logger.info("Loaded %d datasets from persistent disk cache.", len(layers))
+                    return layers
+        except Exception as exc:
+            logger.warning("Could not load dataset disk cache: %s", exc)
+
+        return []
+
+    def save_disk_cache(self, layers: list[Layer]) -> bool:
+        """
+        Menyimpan daftar layer ke file cache lokal.
+        """
+        if not layers:
+            return False
+
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            data = [l.to_dict() for l in layers]
+            with open(DATASETS_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, default=str)
+            logger.info("Saved %d datasets to persistent disk cache.", len(layers))
+            return True
+        except Exception as exc:
+            logger.warning("Failed to save datasets disk cache: %s", exc)
+            return False
+
+    def clear_disk_cache(self) -> None:
+        """
+        Menghapus file cache dataset lokal.
+        """
+        try:
+            if os.path.isfile(DATASETS_CACHE_FILE):
+                os.remove(DATASETS_CACHE_FILE)
+                logger.info("Persistent datasets cache removed.")
+        except Exception as exc:
+            logger.warning("Failed to delete disk cache file: %s", exc)
+
+    # ==========================================================
     # Internal
     # ==========================================================
 
@@ -65,25 +127,32 @@ class LayerService:
         belum tersedia atau dipaksa muat ulang.
         """
 
-        if not self._loaded or force_reload:
+        if self._loaded and not force_reload:
+            return self._layers
 
-            logger.info(
-                "Loading dataset cache..."
+        if not force_reload:
+            disk_layers = self.load_disk_cache()
+            if disk_layers:
+                return disk_layers
+
+        logger.info(
+            "Loading dataset cache from network..."
+        )
+
+        self._layers = (
+            self._dataset_api.get_datasets(
+                fetch_all=True,
+                progress_callback=progress_callback,
             )
+        )
 
-            self._layers = (
-                self._dataset_api.get_datasets(
-                    fetch_all=True,
-                    progress_callback=progress_callback,
-                )
-            )
+        self._loaded = True
+        self.save_disk_cache(self._layers)
 
-            self._loaded = True
-
-            logger.info(
-                "Dataset cache loaded (%s layer).",
-                len(self._layers),
-            )
+        logger.info(
+            "Dataset cache loaded (%s layer).",
+            len(self._layers),
+        )
 
         return self._layers
 
@@ -106,6 +175,7 @@ class LayerService:
     def _update_cache(
         self,
         layers: list[Layer],
+        save_disk: bool = True,
     ) -> None:
         """
         Memperbarui isi cache.
@@ -114,6 +184,9 @@ class LayerService:
         self._layers = list(layers)
 
         self._loaded = True
+
+        if save_disk:
+            self.save_disk_cache(self._layers)
 
         logger.debug(
             "Cache updated (%s layer).",
@@ -146,6 +219,71 @@ class LayerService:
                     return layer
 
         return None
+
+    def get_latest_modified_timestamp(self) -> Optional[str]:
+        """
+        Mendapatkan ISO timestamp modifikasi terbaru dari layer yang ada di cache.
+        """
+        latest = None
+        for layer in self._layers:
+            if layer.modified:
+                if latest is None or layer.modified > latest:
+                    latest = layer.modified
+        if latest:
+            return latest.isoformat()
+        return None
+
+    def merge_layers(self, updated_layers: list[Layer]) -> list[Layer]:
+        """
+        Menggabungkan layer baru / termodifikasi ke dalam daftar layer lokal,
+        lalu memperbarui persistent disk cache.
+        """
+        if not updated_layers:
+            return self._layers
+
+        existing_map = {str(l.pk): i for i, l in enumerate(self._layers)}
+        for item in updated_layers:
+            pk_str = str(item.pk)
+            if pk_str in existing_map:
+                self._layers[existing_map[pk_str]] = item
+            else:
+                self._layers.append(item)
+                existing_map[pk_str] = len(self._layers) - 1
+
+        self.save_disk_cache(self._layers)
+        return self._layers
+
+    def sync_delta(
+        self,
+        progress_callback: Optional[Any] = None,
+    ) -> list[Layer]:
+        """
+        Melakukan delta sync: hanya meminta layer yang dimodifikasi setelah
+        timestamp modifikasi terakhir yang tersimpan di cache lokal.
+        """
+        if not self._layers:
+            self.load_disk_cache()
+
+        if not self._layers:
+            return self._load(progress_callback=progress_callback, force_reload=True)
+
+        latest_ts = self.get_latest_modified_timestamp()
+        if not latest_ts:
+            return self._load(progress_callback=progress_callback, force_reload=True)
+
+        logger.info("Syncing delta datasets since: %s", latest_ts)
+        delta = self._dataset_api.get_delta_datasets(
+            since_timestamp=latest_ts,
+            progress_callback=progress_callback,
+        )
+
+        if delta:
+            logger.info("Delta sync found %d modified/added layers.", len(delta))
+            self.merge_layers(delta)
+        else:
+            logger.info("Delta sync: all local datasets are up to date.")
+
+        return self._layers
 
     # ==========================================================
     # Public API
@@ -383,14 +521,18 @@ class LayerService:
 
     def clear_cache(
         self,
+        clear_disk: bool = True,
     ) -> None:
         """
-        Menghapus cache dataset.
+        Menghapus cache dataset di memori dan disk.
         """
 
         self._layers.clear()
 
         self._loaded = False
+
+        if clear_disk:
+            self.clear_disk_cache()
 
         logger.info(
             "Dataset cache cleared."

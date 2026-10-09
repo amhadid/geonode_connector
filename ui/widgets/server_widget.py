@@ -16,7 +16,9 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QLineEdit,
     QSpinBox,
+    QAbstractSpinBox,
     QCheckBox,
+    QComboBox,
     QLabel,
     QFrame,
     QProgressBar,
@@ -134,6 +136,20 @@ class ServerWidget(QWidget):
                 border: 1.5px solid #10B981;
                 background: #FFFFFF;
             }
+            QComboBox {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 8px 12px;
+                background: #FFFFFF;
+                color: #1E293B;
+                font-size: 9pt;
+            }
+            QComboBox:hover {
+                border-color: #94A3B8;
+            }
+            QComboBox:focus {
+                border: 1.5px solid #10B981;
+            }
             QSpinBox {
                 border: 1.5px solid #CBD5E1;
                 border-radius: 6px;
@@ -144,6 +160,11 @@ class ServerWidget(QWidget):
             }
             QSpinBox:focus {
                 border: 1.5px solid #10B981;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 0px;
+                height: 0px;
+                border: none;
             }
             QCheckBox {
                 color: #334155;
@@ -171,6 +192,28 @@ class ServerWidget(QWidget):
         form_layout = QVBoxLayout(form_card)
         form_layout.setContentsMargins(20, 18, 20, 18)
         form_layout.setSpacing(16)
+
+        # Multi-Instance Preset Dropdown
+        preset_layout = QVBoxLayout()
+        preset_layout.setSpacing(6)
+        lbl_preset_row = QHBoxLayout()
+        lbl_preset_row.setSpacing(6)
+        preset_ico = QLabel()
+        preset_ico.setFixedSize(14, 14)
+        preset_ico.setPixmap(QgsApplication.getThemeIcon("mIconBookmark.svg").pixmap(14, 14))
+        preset_ico.setStyleSheet("border: none; background: transparent;")
+        lbl_preset = QLabel("Pilih Profil Server (Multi-Instance)")
+        lbl_preset.setStyleSheet("border: none; background: transparent; font-weight: 600; color: #1E293B; font-size: 8.5pt;")
+        lbl_preset_row.addWidget(preset_ico)
+        lbl_preset_row.addWidget(lbl_preset)
+        lbl_preset_row.addStretch()
+
+        self.server_combo = QComboBox()
+        self.server_combo.setToolTip("Pilih server tersimpan atau masukkan server baru secara fleksibel")
+
+        preset_layout.addLayout(lbl_preset_row)
+        preset_layout.addWidget(self.server_combo)
+        form_layout.addLayout(preset_layout)
 
         # URL Field
         url_layout = QVBoxLayout()
@@ -229,8 +272,10 @@ class ServerWidget(QWidget):
         to_lbl_row.addStretch()
 
         self.timeout = QSpinBox()
+        self.timeout.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.timeout.setValue(30)
         self.timeout.setRange(3, 300)
+        self.timeout.setSuffix(" detik")
 
         lbl_to_hint = QLabel("Waktu tunggu respons (3-300 detik)")
         lbl_to_hint.setStyleSheet("color: #94A3B8; font-size: 8pt; font-weight: normal; border: none; background: transparent;")

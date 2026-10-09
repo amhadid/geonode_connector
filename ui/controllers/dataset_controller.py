@@ -92,6 +92,11 @@ class DatasetController:
                 self._on_detail_requested
             )
 
+        if hasattr(self.widget, "exportRequested"):
+            self.widget.exportRequested.connect(
+                self.open_export_wizard
+            )
+
     # ==========================================================
     # Helper
     # ==========================================================
@@ -163,104 +168,146 @@ class DatasetController:
         self,
     ) -> None:
         """
-        Load all datasets from LayerService.
+        Load datasets: instantly restore from disk cache if available,
+        then sync silently in background; otherwise fetch asynchronously.
         """
-
         logger.info(
             "Loading dataset browser..."
         )
 
-        self._show_loading("Memuat dataset...")
+        # 1. Fast Path: Coba restore langsung dari disk cache (< 0.05 detik)
+        disk_layers = self.layer_service.load_disk_cache()
+        if disk_layers:
+            logger.info("Restored %d datasets from disk cache instantly.", len(disk_layers))
+            self._populate(disk_layers)
+            self._set_status(f"{len(disk_layers)} dataset(s) (Lokal)")
+            self.widget.hide_loading()
+            # Sinkronisasi senyap di latar belakang menggunakan delta sync
+            self._start_fetch_worker(silent=True, delta_sync=True)
+            return
 
-        def on_progress(layers_so_far: list[Layer], count: int, total: int):
-            self._populate(layers_so_far)
-            self._set_status(f"Memuat dataset ({count}/{total})...")
-            try:
-                from qgis.PyQt.QtCore import QCoreApplication
-                QCoreApplication.processEvents()
-            except Exception:
-                pass
+        # 2. Cold Path: Belum ada cache, unduh secara asinkron di background thread
+        self._show_loading("Menghubungkan ke GeoNode...")
+        self._start_fetch_worker(silent=False)
 
-        try:
+    def _start_fetch_worker(
+        self,
+        silent: bool = False,
+        delta_sync: bool = False,
+    ) -> None:
+        """
+        Menjalankan fetching dataset menggunakan background thread (QThread)
+        sehingga UI QGIS tetap mulus dan responsif.
+        Mendukung delta sync untuk memperbarui hanya layer yang berubah.
+        """
+        # Hentikan worker sebelumnya jika masih berjalan
+        if hasattr(self, "_worker") and self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(500)
 
-            layers = (
-                self.layer_service.get_all(progress_callback=on_progress)
-            )
+        from ...services.dataset_worker import DatasetFetchWorker
 
-            if not layers:
-                layers = self.layer_service.refresh(progress_callback=on_progress)
+        since_ts = None
+        if delta_sync:
+            since_ts = self.layer_service.get_latest_modified_timestamp()
+            if not since_ts:
+                # Jika tidak ada timestamp di cache, lakukan full sync
+                delta_sync = False
 
-            self._populate(
-                layers
-            )
+        self._worker = DatasetFetchWorker(
+            dataset_api=self.layer_service._dataset_api,
+            delta_sync=delta_sync,
+            since_timestamp=since_ts,
+            parent=self.widget,
+        )
 
-            self._set_status(
-                f"{len(layers)} dataset(s)"
-            )
+        def on_page_loaded(accumulated: list[Layer], count: int, total: int):
+            if not silent:
+                self._set_status(f"Mengunduh dataset ({count}/{total})...")
+                # Tampilkan batch pertama segera agar user tidak menunggu lama
+                if self.widget.row_count() == 0 and len(accumulated) > 0:
+                    self._populate(accumulated)
+                    self._hide_loading()
 
-        except Exception as exc:
-
-            logger.exception(exc)
-
-            self.widget.clear()
-
-            self._set_status(
-                "Failed to load dataset."
-            )
-
-        finally:
+        def on_finished(fetched_layers: list[Layer]):
+            if delta_sync:
+                if fetched_layers:
+                    merged = self.layer_service.merge_layers(fetched_layers)
+                    self._populate(merged)
+                    self._set_status(f"{len(merged)} dataset(s)")
+                    logger.info("Delta sync merged %d updated datasets. Total: %d", len(fetched_layers), len(merged))
+                else:
+                    logger.info("Delta sync: all datasets up to date.")
+            else:
+                self.layer_service._update_cache(fetched_layers, save_disk=True)
+                self._populate(fetched_layers)
+                self._set_status(f"{len(fetched_layers)} dataset(s)")
+                logger.info("Background dataset fetch completed successfully (%d datasets).", len(fetched_layers))
 
             self._hide_loading()
+
+        def on_error(error_msg: str):
+            logger.warning("Background dataset fetch encountered error: %s", error_msg)
+            if not silent:
+                self._hide_loading()
+                if self.widget.row_count() == 0:
+                    self._set_status(f"Gagal memuat dataset: {error_msg}")
+                    self.widget.show_notification(f"Gagal mengambil dataset: {error_msg}", is_error=True)
+
+        self._worker.pageLoaded.connect(on_page_loaded)
+        self._worker.finished.connect(on_finished)
+        self._worker.error.connect(on_error)
+        self._worker.start()
+
+    def open_export_wizard(self) -> None:
+        """
+        Membuka dialog wizard ekspor/upload dataset baru ke GeoNode.
+        """
+        from ...models.session import session
+        if not session.is_authenticated:
+            self.widget.show_notification("Silakan login terlebih dahulu sebelum mengekspor dataset.", is_error=True)
+            return
+
+        from ..dialogs.upload_wizard_dialog import UploadWizardDialog
+
+        # Ambil layer aktif di QGIS jika tersedia
+        active_layer = None
+        try:
+            from qgis.utils import iface
+            if iface and iface.activeLayer():
+                active_layer = iface.activeLayer()
+        except Exception:
+            pass
+
+        dlg = UploadWizardDialog(
+            layer=active_layer,
+            layer_service=self.layer_service,
+            parent=self.widget,
+        )
+
+        def on_upload_completed(data: dict):
+            layer_title = data.get("title") or data.get("name") or "Dataset"
+            self.widget.show_notification(f"Dataset '{layer_title}' berhasil diekspor dan ditambahkan ke GeoNode!")
+            # Trigger refresh di background agar layer baru langsung masuk ke tabel katalog
+            self._start_fetch_worker(silent=False, delta_sync=False)
+
+        dlg.uploadCompleted.connect(on_upload_completed)
+        dlg.exec_()
 
     def refresh(
         self,
     ) -> None:
         """
-        Reload datasets from GeoNode.
+        Reload datasets from GeoNode asynchronously.
         """
-
         logger.info(
-            "Refreshing dataset browser..."
+            "Refreshing dataset browser asynchronously..."
         )
 
         self._show_loading(
-            "Refreshing dataset..."
+            "Memperbarui dataset dari server..."
         )
-
-        def on_progress(layers_so_far: list[Layer], count: int, total: int):
-            self._populate(layers_so_far)
-            self._set_status(f"Refreshing dataset ({count}/{total})...")
-            try:
-                from qgis.PyQt.QtCore import QCoreApplication
-                QCoreApplication.processEvents()
-            except Exception:
-                pass
-
-        try:
-
-            layers = (
-                self.layer_service.refresh(progress_callback=on_progress)
-            )
-
-            self._populate(
-                layers
-            )
-
-            self._set_status(
-                f"{len(layers)} dataset(s)"
-            )
-
-        except Exception as exc:
-
-            logger.exception(exc)
-
-            self._set_status(
-                "Refresh failed."
-            )
-
-        finally:
-
-            self._hide_loading()
+        self._start_fetch_worker(silent=False)
 
     def search(
         self,
@@ -320,8 +367,8 @@ class DatasetController:
         pk: str,
     ) -> None:
         """
-        Triggered when user selects
-        a dataset.
+        Triggered when user selects a dataset.
+        Zero network delay: uses cached metadata directly.
         """
 
         logger.debug(
@@ -344,16 +391,8 @@ class DatasetController:
             return
 
         self._selected_layer = layer
-        
-        # Ambil detail layer (API Call jika ada)
-        try:
-            detailed_layer = self.layer_service.load_detail(pk)
-            if detailed_layer:
-                self._selected_layer = detailed_layer
-        except Exception as exc:
-            logger.warning("Could not fetch detailed layer: %s", exc)
 
-        # Update UI Panel if widget has update_detail_panel
+        # Update UI Panel if widget has update_detail_panel (instan tanpa blocking HTTP)
         if hasattr(self.widget, "update_detail_panel"):
             self.widget.update_detail_panel(
                 title=self._selected_layer.title or self._selected_layer.name,

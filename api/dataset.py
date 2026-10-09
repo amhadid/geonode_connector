@@ -661,6 +661,7 @@ class DatasetAPI:
         owner: str | None = None,
         subtype: str | None = None,
         resource_type: str | None = None,
+        modified_since: str | None = None,
         fetch_all: bool = True,
         progress_callback: Any | None = None,
     ) -> list[Layer]:
@@ -681,9 +682,10 @@ class DatasetAPI:
             Geometry subtype filter.
         resource_type : str | None
             Resource type filter.
+        modified_since : str | None
+            Filter ISO timestamp untuk delta sync (hanya ambil data yang berubah).
         fetch_all : bool
             If True, automatically traverses all remaining pages to fetch all datasets.
-            If False, only fetches the single page specified.
         progress_callback : callable | None
             Optional progress callback: callback(all_layers, loaded_count, total_count).
         """
@@ -706,11 +708,15 @@ class DatasetAPI:
         if resource_type:
             params["resource_type"] = resource_type
 
+        if modified_since:
+            params["filter{date_modified.gte}"] = modified_since
+
         logger.info(
-            "Loading datasets (page=%s, page_size=%s, fetch_all=%s)...",
+            "Loading datasets (page=%s, page_size=%s, fetch_all=%s, modified_since=%s)...",
             page,
             actual_page_size,
             fetch_all,
+            modified_since,
         )
 
         all_layers: list[Layer] = []
@@ -781,6 +787,28 @@ class DatasetAPI:
 
             current_page += 1
 
+        # Supplementary check untuk dataset non-layers_dataset (misal 3D Tiles PK 619, remote services, dll.)
+        # agar seluruh 522 dataset yang terdaftar di Geoportal Katalog masuk lengkap
+        if fetch_all and not search and not modified_since:
+            try:
+                res_resp = self._get("resources", params={"filter{resource_type}": "dataset", "page_size": 20})
+                res_items = res_resp.get("resources") or []
+                existing_pks = {str(l.pk if l.pk else l.id) for l in all_layers}
+                supp_added = 0
+                for item in res_items:
+                    item_pk = str(item.get("pk") or item.get("id"))
+                    if item_pk and item_pk not in existing_pks:
+                        supp_layer = self._map_layer(item)
+                        all_layers.append(supp_layer)
+                        existing_pks.add(item_pk)
+                        supp_added += 1
+                if supp_added > 0:
+                    logger.info("Added %d supplementary dataset(s). Total datasets now: %d", supp_added, len(all_layers))
+                    if progress_callback:
+                        progress_callback(all_layers, len(all_layers), len(all_layers))
+            except Exception as e_supp:
+                logger.debug("Supplementary resources check note: %s", e_supp)
+
         logger.info(
             "Loaded %d dataset(s) total across %d page(s).",
             len(all_layers),
@@ -788,6 +816,21 @@ class DatasetAPI:
         )
 
         return all_layers
+
+    def get_delta_datasets(
+        self,
+        since_timestamp: str,
+        progress_callback: Any | None = None,
+    ) -> list[Layer]:
+        """
+        Mengambil hanya dataset yang mengalami perubahan setelah since_timestamp (Delta Sync).
+        """
+        logger.info("Requesting delta datasets modified since: %s", since_timestamp)
+        return self.get_datasets(
+            fetch_all=True,
+            modified_since=since_timestamp,
+            progress_callback=progress_callback,
+        )
 
     def get_dataset(
         self,

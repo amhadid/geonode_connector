@@ -110,7 +110,7 @@ SUPPORTED_PYTHON_VERSIONS = (
 # Default Connection
 # =============================================================================
 
-DEFAULT_SERVER = os.getenv("DEFAULT_SERVER", "https://geonode-beta.jogjakota.go.id")
+DEFAULT_SERVER = os.getenv("DEFAULT_SERVER")
 
 VERIFY_SSL = True
 
@@ -318,6 +318,11 @@ CACHE_DIR = os.path.join(
     "cache",
 )
 
+GEOPACKAGE_CACHE_DIR = os.path.join(
+    CACHE_DIR,
+    "gpkg",
+)
+
 SHAPEFILE_CACHE_DIR = os.path.join(
     CACHE_DIR,
     "shapefiles",
@@ -336,7 +341,11 @@ SETTINGS_GROUP = "GeoNodeConnector"
 
 SETTING_SERVER = "server"
 
+SETTING_SERVER_LIST = "server_list"
+
 SETTING_USERNAME = "username"
+
+SETTING_AUTH_ID = "auth_id"
 
 SETTING_REMEMBER = "remember"
 

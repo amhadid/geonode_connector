@@ -21,8 +21,7 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QPushButton,
     QLineEdit,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QHeaderView,
     QProgressBar,
     QFrame,
@@ -31,6 +30,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtGui import QColor, QFont
 
 from ...models.layer import Layer
+from ..models.dataset_table_model import DatasetTableModel, DatasetProxyModel
 from ...utils.style_loader import StyleLoader
 from ...utils.logger import get_logger
 
@@ -49,8 +49,10 @@ class DatasetWidget(QWidget):
     layerSelected = pyqtSignal(str)
     importRequested = pyqtSignal(str)
     detailRequested = pyqtSignal(str)
+    exportRequested = pyqtSignal()
     importWmsRequested = pyqtSignal(str)
     importWfsRequested = pyqtSignal(str)
+    importGpkgRequested = pyqtSignal(str)
     importGeoJsonRequested = pyqtSignal(str)
     importShapefileRequested = pyqtSignal(str)
 
@@ -191,33 +193,33 @@ class DatasetWidget(QWidget):
         self.main_layout.addLayout(layout)
 
     def _create_table(self):
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels([
-            "",
-            "NAMA DATASET",
-            "TIPE",
-            "TERAKHIR DIPERBARUI",
-        ])
+        self.table_view = QTableView(self)
+        self.source_model = DatasetTableModel(self)
+        self.proxy_model = DatasetProxyModel(self)
+        self.proxy_model.setSourceModel(self.source_model)
+        self.table_view.setModel(self.proxy_model)
 
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(46)
+        self.table_view.setSelectionBehavior(QTableView.SelectRows)
+        self.table_view.setSelectionMode(QTableView.SingleSelection)
+        self.table_view.setAlternatingRowColors(True)
+        self.table_view.setShowGrid(False)
+        self.table_view.verticalHeader().setVisible(False)
+        self.table_view.verticalHeader().setDefaultSectionSize(46)
 
-        header = self.table.horizontalHeader()
+        header = self.table_view.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Fixed)
-        self.table.setColumnWidth(0, 36)
+        self.table_view.setColumnWidth(0, 36)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
 
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
+        self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table_view.customContextMenuRequested.connect(self._show_table_context_menu)
 
-        self.main_layout.addWidget(self.table, stretch=1)
+        # Backward compatibility alias
+        self.table = self.table_view
+
+        self.main_layout.addWidget(self.table_view, stretch=1)
 
     def _create_action_buttons(self):
         layout = QHBoxLayout()
@@ -260,6 +262,10 @@ class DatasetWidget(QWidget):
             QgsApplication.getThemeIcon("mActionAddWfsLayer.svg"),
             "Live WFS (OWS Vector) — [Disarankan]"
         )
+        self.act_import_gpkg = self.import_menu.addAction(
+            QgsApplication.getThemeIcon("mActionAddOgrLayer.svg"),
+            "GeoPackage (.gpkg) — [Standard Cache Native]"
+        )
         self.act_import_geojson = self.import_menu.addAction(
             QgsApplication.getThemeIcon("mActionAddOgrLayer.svg"),
             "GeoJSON (Vector Layer)"
@@ -275,13 +281,14 @@ class DatasetWidget(QWidget):
         )
 
         self.act_import_wfs.triggered.connect(lambda: self._on_import_format("WFS"))
+        self.act_import_gpkg.triggered.connect(lambda: self._on_import_format("GEOPACKAGE"))
         self.act_import_geojson.triggered.connect(lambda: self._on_import_format("GEOJSON"))
         self.act_import_shp.triggered.connect(lambda: self._on_import_format("SHAPEFILE"))
         self.act_import_wms.triggered.connect(lambda: self._on_import_format("WMS"))
 
         self.btn_import_menu = QPushButton("▼")
         self.btn_import_menu.setObjectName("importMenuButton")
-        self.btn_import_menu.setToolTip("Pilih format import (WFS, GeoJSON, Shapefile, WMS)")
+        self.btn_import_menu.setToolTip("Pilih format import (WFS, GeoPackage, GeoJSON, Shapefile, WMS)")
         self.btn_import_menu.setCursor(Qt.PointingHandCursor)
         self.btn_import_menu.setFixedSize(26, 34)
         self.btn_import_menu.setEnabled(False)
@@ -323,9 +330,35 @@ class DatasetWidget(QWidget):
         self.btn_refresh_bottom.setIcon(QgsApplication.getThemeIcon("mActionRefresh.svg"))
         self.btn_refresh_bottom.setCursor(Qt.PointingHandCursor)
 
+        # 4. EKSPOR KE GEONODE Button (Sky Blue gradient)
+        self.btn_export = QPushButton("EKSPOR KE GEONODE")
+        self.btn_export.setObjectName("exportButton")
+        self.btn_export.setIcon(QgsApplication.getThemeIcon("mActionSharingExport.svg"))
+        self.btn_export.setToolTip("Ekspor layer aktif QGIS atau file spasial lokal sebagai dataset baru ke GeoNode")
+        self.btn_export.setCursor(Qt.PointingHandCursor)
+        self.btn_export.setStyleSheet("""
+            QPushButton#exportButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0284C7, stop:1 #0369A1);
+                color: white;
+                font-weight: 700;
+                border-radius: 6px;
+                padding: 8px 16px;
+                border: none;
+                font-size: 8.5pt;
+            }
+            QPushButton#exportButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0369A1, stop:1 #075985);
+            }
+            QPushButton#exportButton:pressed {
+                background: #0C4A6E;
+            }
+        """)
+        self.btn_export.clicked.connect(self.exportRequested.emit)
+
         layout.addLayout(import_btn_layout)
         layout.addWidget(self.btn_detail)
         layout.addWidget(self.btn_refresh_bottom)
+        layout.addWidget(self.btn_export)
         layout.addStretch()
 
         self.main_layout.addLayout(layout)
@@ -375,16 +408,29 @@ class DatasetWidget(QWidget):
         self.main_layout.addLayout(layout)
 
     def _connect_signals(self):
-        self.search_edit.textChanged.connect(self.searchRequested.emit)
+        self.search_edit.textChanged.connect(self._on_search_text_changed)
+        self.search_edit.returnPressed.connect(lambda: self.searchRequested.emit(self.search_edit.text()))
         self.refresh_button.clicked.connect(self.refreshRequested.emit)
         self.btn_refresh_bottom.clicked.connect(self.refreshRequested.emit)
 
-        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
-        self.table.itemDoubleClicked.connect(self._on_table_item_double_clicked)
-        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table_view.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
+        self.table_view.doubleClicked.connect(self._on_table_double_clicked)
+        self.table_view.clicked.connect(self._on_table_clicked)
 
         self.btn_import.clicked.connect(self._on_import_clicked)
         self.btn_detail.clicked.connect(self._on_detail_clicked)
+
+    def _on_search_text_changed(self, text: str):
+        """
+        Pencarian instan di level C++ menggunakan QSortFilterProxyModel (0ms delay).
+        """
+        self.proxy_model.set_filter_text(text)
+        count = self.proxy_model.rowCount()
+        total = self.source_model.rowCount()
+        if text.strip():
+            self.status_label.setText(f"Ditemukan {count} dari {total} dataset")
+        else:
+            self.status_label.setText(f"{total} dataset tersedia")
 
     # ==========================================================
     # Data Population
@@ -392,68 +438,10 @@ class DatasetWidget(QWidget):
 
     def populate(self, layers: list[Layer]) -> None:
         """
-        Menampilkan daftar dataset dengan styling modern.
+        Menampilkan daftar dataset secara virtual rendering instan melalui Model/View.
         """
         self._layers = list(layers)
-        self.table.blockSignals(True)
-        self.table.setRowCount(len(layers))
-
-        for row, layer in enumerate(layers):
-            pk_str = str(layer.pk if layer.pk else layer.id)
-
-            # Col 0: Centered Checkbox
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            chk_item.setCheckState(Qt.Unchecked)
-            chk_item.setTextAlignment(Qt.AlignCenter)
-            chk_item.setData(Qt.UserRole, pk_str)
-
-            # Col 1: Nama Dataset (Title)
-            display_title = layer.title or layer.name
-            name_item = QTableWidgetItem(display_title)
-            name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            name_item.setData(Qt.UserRole, pk_str)
-            name_font = QFont()
-            name_font.setBold(True)
-            name_font.setPointSize(9)
-            name_item.setFont(name_font)
-            name_item.setForeground(QColor("#1E293B"))
-
-            # Col 2: Tipe Badge (Vector / Raster)
-            is_vector = layer.is_vector or (not layer.is_raster)
-            type_text = "Vector" if is_vector else "Raster"
-            type_item = QTableWidgetItem(type_text)
-            type_item.setIcon(
-                QgsApplication.getThemeIcon("mIconVector.svg" if is_vector else "mIconRaster.svg")
-            )
-            type_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            type_item.setTextAlignment(Qt.AlignCenter)
-            type_font = QFont()
-            type_font.setBold(True)
-            type_font.setPointSize(9)
-            type_item.setFont(type_font)
-            type_item.setForeground(QColor("#0284C7" if is_vector else "#D97706"))
-
-            # Col 3: Terakhir Diperbarui
-            date_text = "-"
-            dt = layer.modified or layer.created
-            if dt:
-                if isinstance(dt, datetime):
-                    date_text = dt.strftime("%d/%m/%Y")
-                else:
-                    date_text = str(dt)[:10]
-
-            date_item = QTableWidgetItem(date_text)
-            date_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            date_item.setTextAlignment(Qt.AlignCenter)
-            date_item.setForeground(QColor("#64748B"))
-
-            self.table.setItem(row, 0, chk_item)
-            self.table.setItem(row, 1, name_item)
-            self.table.setItem(row, 2, type_item)
-            self.table.setItem(row, 3, date_item)
-
-        self.table.blockSignals(False)
+        self.source_model.set_layers(layers)
 
         self.btn_import.setEnabled(False)
         self.btn_import_menu.setEnabled(False)
@@ -462,7 +450,8 @@ class DatasetWidget(QWidget):
         self.status_label.setText(f"{len(layers)} dataset tersedia")
 
     def clear(self) -> None:
-        self.table.setRowCount(0)
+        self._layers.clear()
+        self.source_model.set_layers([])
         self._selected_pk = None
         self.btn_import.setEnabled(False)
         self.btn_import_menu.setEnabled(False)
@@ -483,13 +472,18 @@ class DatasetWidget(QWidget):
     def set_status(self, text: str) -> None:
         self.status_label.setText(text)
 
+    def row_count(self) -> int:
+        if hasattr(self, "source_model") and self.source_model:
+            return self.source_model.rowCount()
+        return 0
+
     def selected_layer(self) -> Optional[str]:
         return self._selected_pk
 
     # Backward compatibility helper
     @property
     def tree(self):
-        return self.table
+        return self.table_view
 
     def update_detail_panel(self, title: str, abstract: str, has_wms: bool, has_wfs: bool):
         self.btn_import.setEnabled(True)
@@ -505,37 +499,31 @@ class DatasetWidget(QWidget):
     # Events & Interaction
     # ==========================================================
 
-    def _on_cell_clicked(self, row: int, column: int):
-        self._update_selection_for_row(row)
+    def _on_table_clicked(self, proxy_index):
+        self._update_selection_from_proxy_index(proxy_index)
 
-    def _on_table_selection_changed(self):
-        selected_rows = self.table.selectionModel().selectedRows()
+    def _on_table_selection_changed(self, selected=None, deselected=None):
+        selected_rows = self.table_view.selectionModel().selectedRows()
         if selected_rows:
-            self._update_selection_for_row(selected_rows[0].row())
+            self._update_selection_from_proxy_index(selected_rows[0])
         else:
             self._selected_pk = None
+            self.source_model.set_selected_pk(None)
             self.btn_import.setEnabled(False)
             self.btn_import_menu.setEnabled(False)
             self.btn_detail.setEnabled(False)
 
-    def _update_selection_for_row(self, row: int):
-        if row < 0 or row >= self.table.rowCount():
+    def _update_selection_from_proxy_index(self, proxy_index):
+        if not proxy_index.isValid():
+            return
+        source_index = self.proxy_model.mapToSource(proxy_index)
+        layer = self.source_model.get_layer(source_index.row())
+        if not layer:
             return
 
-        pk_item = self.table.item(row, 0)
-        if not pk_item:
-            return
-
-        pk = pk_item.data(Qt.UserRole)
-        self._selected_pk = str(pk)
-
-        # Single check selection
-        self.table.blockSignals(True)
-        for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if item:
-                item.setCheckState(Qt.Checked if r == row else Qt.Unchecked)
-        self.table.blockSignals(False)
+        pk = str(layer.pk if layer.pk else layer.id)
+        self._selected_pk = pk
+        self.source_model.set_selected_pk(pk)
 
         self.btn_import.setEnabled(True)
         self.btn_import_menu.setEnabled(True)
@@ -545,18 +533,42 @@ class DatasetWidget(QWidget):
         self.layerSelected.emit(str(pk))
 
     def _show_table_context_menu(self, pos):
-        item = self.table.itemAt(pos)
-        if not item:
-            return
-        row = item.row()
-        self._update_selection_for_row(row)
-        self.import_menu.exec_(self.table.mapToGlobal(pos))
+        proxy_index = self.table_view.indexAt(pos)
+        menu = QMenu(self)
+        menu.setStyleSheet(self.import_menu.styleSheet())
+
+        act_export = menu.addAction(
+            QgsApplication.getThemeIcon("mActionSharingExport.svg"),
+            "Ekspor / Tambah Dataset Baru ke GeoNode..."
+        )
+        act_export.triggered.connect(self.exportRequested.emit)
+
+        if proxy_index.isValid():
+            self._update_selection_from_proxy_index(proxy_index)
+            menu.addSeparator()
+            act_wfs = menu.addAction(QgsApplication.getThemeIcon("mActionAddWfsLayer.svg"), "Import Live WFS")
+            act_wfs.triggered.connect(lambda: self._on_import_format("WFS"))
+            act_gpkg = menu.addAction(QgsApplication.getThemeIcon("mActionAddOgrLayer.svg"), "Import GeoPackage (.gpkg)")
+            act_gpkg.triggered.connect(lambda: self._on_import_format("GEOPACKAGE"))
+            act_geojson = menu.addAction(QgsApplication.getThemeIcon("mActionAddOgrLayer.svg"), "Import GeoJSON")
+            act_geojson.triggered.connect(lambda: self._on_import_format("GEOJSON"))
+            act_shp = menu.addAction(QgsApplication.getThemeIcon("mActionFileSave.svg"), "Import Shapefile (.shp)")
+            act_shp.triggered.connect(lambda: self._on_import_format("SHAPEFILE"))
+            act_wms = menu.addAction(QgsApplication.getThemeIcon("mActionAddWmsLayer.svg"), "Import WMS (Raster)")
+            act_wms.triggered.connect(lambda: self._on_import_format("WMS"))
+            menu.addSeparator()
+            act_detail = menu.addAction(QgsApplication.getThemeIcon("mActionPropertyItem.svg"), "Lihat Detail Metadata")
+            act_detail.triggered.connect(self._on_detail_clicked)
+
+        menu.exec_(self.table_view.mapToGlobal(pos))
 
     def _on_import_format(self, format_name: str):
         if not self._selected_pk:
             return
         logger.info("Import format requested: %s for PK: %s", format_name, self._selected_pk)
-        if format_name == "WFS":
+        if format_name in ("GPKG", "GEOPACKAGE"):
+            self.importGpkgRequested.emit(self._selected_pk)
+        elif format_name == "WFS":
             self.importWfsRequested.emit(self._selected_pk)
         elif format_name == "GEOJSON":
             self.importGeoJsonRequested.emit(self._selected_pk)
@@ -565,13 +577,15 @@ class DatasetWidget(QWidget):
         elif format_name == "WMS":
             self.importWmsRequested.emit(self._selected_pk)
 
-    def _on_table_item_double_clicked(self, item: QTableWidgetItem):
-        row = item.row()
-        pk_item = self.table.item(row, 0)
-        if pk_item:
-            pk = pk_item.data(Qt.UserRole)
-            self.layerActivated.emit(str(pk))
-            self._on_import_clicked()
+    def _on_table_item_double_clicked(self, item=None):
+        self._on_table_double_clicked(self.table_view.currentIndex())
+
+    def _on_table_double_clicked(self, proxy_index):
+        if proxy_index.isValid():
+            self._update_selection_from_proxy_index(proxy_index)
+            if self._selected_pk:
+                self.layerActivated.emit(self._selected_pk)
+                self._on_import_clicked()
 
     def _on_import_clicked(self):
         if self._selected_pk:
@@ -593,7 +607,4 @@ class DatasetWidget(QWidget):
             self.detailRequested.emit(self._selected_pk)
 
     def _get_layer_by_pk(self, pk: str) -> Optional[Layer]:
-        for layer in self._layers:
-            if str(layer.pk) == str(pk) or (layer.id is not None and str(layer.id) == str(pk)):
-                return layer
-        return None
+        return self.source_model.get_layer_by_pk(pk)

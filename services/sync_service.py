@@ -83,41 +83,30 @@ class SyncService:
             if now - cache_time < 5.0:
                 return cached_cols
 
-        conn = self._get_postgis_connection()
-        if not conn:
-            return set()
-
+        # Gunakan QgsDataSourceUri bawaan QGIS untuk koneksi PostgreSQL tanpa dependensi psycopg2
         try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
-                (table_name,)
+            from qgis.core import QgsDataSourceUri, QgsVectorLayer
+            uri = QgsDataSourceUri()
+            uri.setConnection(
+                POSTGIS_DEFAULT_HOST,
+                str(POSTGIS_DEFAULT_PORT),
+                POSTGIS_DEFAULT_DB,
+                POSTGIS_DEFAULT_USER,
+                POSTGIS_DEFAULT_PASSWORD
             )
-            rows = cur.fetchall()
-            if not rows:
-                clean_raw = "".join(c for c in raw_name.lower() if c.isalnum() or c == "_")
-                cur.execute(
-                    "SELECT table_name FROM information_schema.tables WHERE (table_name LIKE %s OR table_name LIKE %s) AND table_schema = 'public'",
-                    (f"%{table_name}%", f"%{clean_raw}%")
-                )
-                sim = cur.fetchone()
-                if sim:
-                    table_name = sim[0]
-                    cur.execute(
-                        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
-                        (table_name,)
-                    )
-                    rows = cur.fetchall()
-            conn.close()
-            cols = {r[0].lower() for r in rows}
-            self._table_columns_cache[table_name] = (now, cols)
-            return cols
-        except Exception:
-            try:
-                conn.close()
-            except Exception:
-                pass
-            return set()
+            uri.setDataSource("public", table_name, None)
+            vl = QgsVectorLayer(uri.uri(False), table_name, "postgres")
+            if vl.isValid():
+                cols = {f.name().lower() for f in vl.fields()}
+                self._table_columns_cache[table_name] = (now, cols)
+                return cols
+        except Exception as e_ds:
+            logger.debug(f"QgsDataSourceUri column check note: {e_ds}")
+
+        # Fallback ke skema fields pada layer QGIS aktif
+        cols = {f.name().lower() for f in layer.fields()}
+        self._table_columns_cache[table_name] = (now, cols)
+        return cols
 
     def get_pending_changes(self, layer: Optional[QgsVectorLayer]) -> Dict[str, Any]:
         """
@@ -729,21 +718,12 @@ class SyncService:
 
     def _sync_ogr_layer(self, layer: QgsVectorLayer, changes: Dict[str, Any]) -> ServiceResult:
         """
-        Sinkronisasi layer lokal (Shapefile / GeoJSON).
-        1. Jika basis data PostGIS terbuka (port 5432 / localhost docker), simpan langsung ke PostGIS.
-        2. Jika koneksi PostGIS tidak tersedia (remote server publik), gunakan transaksi WFS-T HTTP.
-        3. Komit perubahan ke file lokal (.shp / .geojson).
+        Sinkronisasi layer lokal (GeoPackage / GeoJSON / Shapefile).
+        Mengutamakan transaksi melalui protokol standar WFS-T GeoServer berbasis
+        hak akses akun pengguna aktif di GeoNode guna membatasi akses SQL superuser.
         """
-        conn = self._get_postgis_connection()
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-            return self._sync_layer_to_postgis(layer, changes)
-
         logger.info(
-            f"Port basis data PostGIS 5432 tidak dapat diakses langsung. Menjalankan sinkronisasi via WFS-T HTTP untuk layer '{layer.name()}'..."
+            f"Menjalankan sinkronisasi aman via protokol WFS-T per-user untuk layer '{layer.name()}'..."
         )
         return self._sync_via_wfst_http(layer, changes)
 
