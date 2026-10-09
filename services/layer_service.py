@@ -317,22 +317,61 @@ class LayerService:
             len(self._layers),
         )
 
-        return self._layers
+    def filter_layers_for_user(
+        self,
+        layers: list[Layer],
+        username: Optional[str] = None,
+        is_superuser: Optional[bool] = None,
+        user_id: Optional[int] = None,
+    ) -> list[Layer]:
+        """
+        Menyaring dataset berdasarkan hak akses pengguna GeoNode:
+        - Super Admin (is_superuser=True): melihat semua dataset di geoportal.
+        - Staff User / Non-admin: hanya melihat dataset yang diunggah
+          oleh pengguna tersebut (berdasarkan owner_username, owner_id,
+          atau metadata_author).
+        """
+        from ..models.session import session
+
+        if is_superuser is None:
+            is_superuser = bool(getattr(session, "is_superuser", False))
+
+        # Super admin mendapatkan akses penuh ke seluruh dataset
+        if is_superuser:
+            return list(layers)
+
+        if username is None:
+            username = getattr(session, "username", "")
+        if user_id is None:
+            user_id = getattr(session, "user_id", None)
+
+        if not username and user_id is None:
+            return []
+
+        filtered = [
+            layer for layer in layers
+            if layer.is_authored_by(username=username, user_id=user_id)
+        ]
+        return filtered
 
     def get_all(
         self,
         progress_callback: Optional[Any] = None,
+        filter_by_user: bool = True,
     ) -> list[Layer]:
         """
         Mengambil seluruh dataset.
 
-        Apabila cache belum tersedia,
-        data akan diambil dari server.
+        Apabila cache belum tersedia, data akan diambil dari server.
+        Jika filter_by_user=True, dataset disaring sesuai hak akses user.
         """
 
-        return list(
+        layers = list(
             self._load(progress_callback=progress_callback)
         )
+        if filter_by_user:
+            return self.filter_layers_for_user(layers)
+        return layers
 
     def get(
         self,
@@ -377,9 +416,11 @@ class LayerService:
     def search(
         self,
         keyword: str,
+        filter_by_user: bool = True,
     ) -> list[Layer]:
         """
         Melakukan pencarian dataset pada cache.
+        Jika filter_by_user=True, pencarian hanya dilakukan pada dataset yang diizinkan untuk user saat ini.
 
         Pencarian dilakukan terhadap:
         - name
@@ -389,6 +430,8 @@ class LayerService:
         """
 
         layers = self._load()
+        if filter_by_user:
+            layers = self.filter_layers_for_user(layers)
 
         keyword = keyword.strip().lower()
 
@@ -521,7 +564,7 @@ class LayerService:
 
     def clear_cache(
         self,
-        clear_disk: bool = True,
+        clear_disk: bool = False,
     ) -> None:
         """
         Menghapus cache dataset di memori dan disk.

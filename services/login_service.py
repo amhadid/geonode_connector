@@ -257,9 +257,17 @@ class LoginService:
             user_data,
         )
 
+        self._session.update(
+            is_staff=self._user.is_staff,
+            is_superuser=self._user.is_superuser,
+            user_id=self._user.id,
+        )
+
         logger.info(
-            "Loaded username     : %s",
+            "Loaded username     : %s (staff=%s, superuser=%s)",
             self._user.username,
+            self._user.is_staff,
+            self._user.is_superuser,
         )
 
         logger.info(

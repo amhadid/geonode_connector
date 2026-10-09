@@ -160,6 +160,25 @@ class DatasetController:
             len(layers),
         )
 
+    def _update_dataset_status(
+        self,
+        count: int,
+        total_global: Optional[int] = None,
+    ) -> None:
+        """
+        Memperbarui status label widget berdasarkan peran pengguna GeoNode:
+        Super Admin menampilkan seluruh dataset geoportal,
+        sedangkan Staff User menampilkan dataset miliknya (author).
+        """
+        from ...models.session import session
+
+        if session.is_superuser:
+            self._set_status(f"{count} dataset(s) (Super Admin)")
+        elif session.username:
+            self._set_status(f"{count} dataset(s) (Author: {session.username})")
+        else:
+            self._set_status(f"{count} dataset(s)")
+
     # ==========================================================
     # Public API
     # ==========================================================
@@ -178,9 +197,10 @@ class DatasetController:
         # 1. Fast Path: Coba restore langsung dari disk cache (< 0.05 detik)
         disk_layers = self.layer_service.load_disk_cache()
         if disk_layers:
-            logger.info("Restored %d datasets from disk cache instantly.", len(disk_layers))
-            self._populate(disk_layers)
-            self._set_status(f"{len(disk_layers)} dataset(s) (Lokal)")
+            filtered_layers = self.layer_service.filter_layers_for_user(disk_layers)
+            logger.info("Restored %d datasets (filtered: %d) from disk cache instantly.", len(disk_layers), len(filtered_layers))
+            self._populate(filtered_layers)
+            self._update_dataset_status(len(filtered_layers), len(disk_layers))
             self.widget.hide_loading()
             # Sinkronisasi senyap di latar belakang menggunakan delta sync
             self._start_fetch_worker(silent=True, delta_sync=True)
@@ -226,23 +246,26 @@ class DatasetController:
                 self._set_status(f"Mengunduh dataset ({count}/{total})...")
                 # Tampilkan batch pertama segera agar user tidak menunggu lama
                 if self.widget.row_count() == 0 and len(accumulated) > 0:
-                    self._populate(accumulated)
+                    filtered = self.layer_service.filter_layers_for_user(accumulated)
+                    self._populate(filtered)
                     self._hide_loading()
 
         def on_finished(fetched_layers: list[Layer]):
             if delta_sync:
                 if fetched_layers:
                     merged = self.layer_service.merge_layers(fetched_layers)
-                    self._populate(merged)
-                    self._set_status(f"{len(merged)} dataset(s)")
-                    logger.info("Delta sync merged %d updated datasets. Total: %d", len(fetched_layers), len(merged))
+                    filtered = self.layer_service.filter_layers_for_user(merged)
+                    self._populate(filtered)
+                    self._update_dataset_status(len(filtered), len(merged))
+                    logger.info("Delta sync merged %d updated datasets. Total: %d, Filtered: %d", len(fetched_layers), len(merged), len(filtered))
                 else:
                     logger.info("Delta sync: all datasets up to date.")
             else:
                 self.layer_service._update_cache(fetched_layers, save_disk=True)
-                self._populate(fetched_layers)
-                self._set_status(f"{len(fetched_layers)} dataset(s)")
-                logger.info("Background dataset fetch completed successfully (%d datasets).", len(fetched_layers))
+                filtered = self.layer_service.filter_layers_for_user(fetched_layers)
+                self._populate(filtered)
+                self._update_dataset_status(len(filtered), len(fetched_layers))
+                logger.info("Background dataset fetch completed successfully (%d datasets, Filtered: %d).", len(fetched_layers), len(filtered))
 
             self._hide_loading()
 
@@ -330,22 +353,25 @@ class DatasetController:
 
                 layers = (
                     self.layer_service.search(
-                        keyword
+                        keyword,
+                        filter_by_user=True,
                     )
                 )
 
             else:
 
                 layers = (
-                    self.layer_service.get_all()
+                    self.layer_service.get_all(
+                        filter_by_user=True,
+                    )
                 )
 
             self._populate(
                 layers
             )
 
-            self._set_status(
-                f"{len(layers)} dataset(s)"
+            self._update_dataset_status(
+                len(layers)
             )
 
         except Exception as exc:

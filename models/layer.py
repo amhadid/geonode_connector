@@ -53,6 +53,7 @@ class Layer:
 
     owner_id: int | None = None
     owner_username: str = ""
+    metadata_author: list[str] = field(default_factory=list)
 
     # ==========================================================
     # GeoServer
@@ -155,6 +156,11 @@ class Layer:
 
             owner_id=data.get("owner_id"),
             owner_username=data.get("owner_username", ""),
+            metadata_author=(
+                data.get("metadata_author", [])
+                if isinstance(data.get("metadata_author"), list)
+                else ([str(data.get("metadata_author"))] if data.get("metadata_author") else [])
+            ),
 
             workspace=data.get("workspace", ""),
             store=data.get("store", ""),
@@ -224,6 +230,37 @@ class Layer:
             and self.workspace
             and self.subtype
         )
+
+    def is_authored_by(self, username: str = "", user_id: int | None = None) -> bool:
+        """
+        Memeriksa apakah dataset ini diunggah atau dimiliki oleh username/user_id tertentu.
+        Pemeriksaan bersifat case-insensitive.
+        """
+        if not username and user_id is None:
+            return False
+
+        target_uname = username.strip().lower() if username else ""
+
+        # 1. Cek owner_username
+        if target_uname and self.owner_username:
+            if self.owner_username.strip().lower() == target_uname:
+                return True
+
+        # 2. Cek owner_id
+        if user_id is not None and self.owner_id is not None:
+            try:
+                if int(self.owner_id) == int(user_id):
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Cek metadata_author
+        if target_uname and self.metadata_author:
+            for author in self.metadata_author:
+                if str(author).strip().lower() == target_uname:
+                    return True
+
+        return False
 
     # ==========================================================
     # Computed Properties

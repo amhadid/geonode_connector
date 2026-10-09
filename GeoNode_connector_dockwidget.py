@@ -471,7 +471,8 @@ class GeoNodeConnectorDialog(QMainWindow):
         )
         surl = session.server_url or "http://localhost"
 
-        self.lbl_header_user.setText(uname)
+        role_label = " (Super Admin)" if session.is_superuser else (" (Staff)" if session.is_staff else "")
+        self.lbl_header_user.setText(f"{uname}{role_label}")
         self.lbl_header_server.setText(surl)
         self.header_widget.show()
 
@@ -538,7 +539,7 @@ class GeoNodeConnectorDialog(QMainWindow):
             self.login_controller.logout()
 
         if self.layer_service:
-            self.layer_service.clear_cache()
+            self.layer_service.clear_cache(clear_disk=False)
 
         if self.dataset_controller:
             self.dataset_controller.clear()

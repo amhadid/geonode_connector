@@ -269,6 +269,33 @@ class DatasetAPI:
             or {}
         )
 
+        authors: list[str] = []
+        raw_ma = item.get("metadata_author")
+        if isinstance(raw_ma, list):
+            for a in raw_ma:
+                if isinstance(a, dict):
+                    u = a.get("username") or a.get("name")
+                    if u:
+                        authors.append(str(u))
+                elif isinstance(a, str) and a.strip():
+                    authors.append(a.strip())
+        elif isinstance(raw_ma, dict):
+            u = raw_ma.get("username") or raw_ma.get("name")
+            if u:
+                authors.append(str(u))
+        elif isinstance(raw_ma, str) and raw_ma.strip():
+            authors.append(raw_ma.strip())
+
+        raw_poc = item.get("poc")
+        if isinstance(raw_poc, list):
+            for p in raw_poc:
+                if isinstance(p, dict):
+                    u = p.get("username") or p.get("name")
+                    if u and str(u) not in authors:
+                        authors.append(str(u))
+                elif isinstance(p, str) and p.strip() and p.strip() not in authors:
+                    authors.append(p.strip())
+
         mapped = {
 
             # --------------------------------------------------
@@ -300,6 +327,8 @@ class DatasetAPI:
             "owner_username": owner.get(
                 "username"
             ),
+
+            "metadata_author": authors,
 
             # --------------------------------------------------
             # GeoServer
