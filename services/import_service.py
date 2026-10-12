@@ -32,6 +32,7 @@ from qgis.core import (
     QgsFeatureRequest,
     QgsVectorFileWriter,
     QgsCoordinateTransformContext,
+    QgsCoordinateReferenceSystem,
 )
 
 from ..models.layer import Layer
@@ -56,15 +57,18 @@ class ImportService:
     Mendukung WFS (OWS Vector), GeoJSON, Shapefile, dan WMS (Raster).
     """
 
-    def __init__(self, project: Optional[QgsProject] = None) -> None:
+    def __init__(self, project: Optional[QgsProject] = None, iface=None) -> None:
         """
         Parameters
         ----------
         project : QgsProject, optional
             Instansi QgsProject aktif. Jika None, gunakan instance global.
+        iface : QgisInterface, optional
+            Antarmuka pengguna QGIS untuk kontrol kanvas dan layer aktif.
         """
         self._project = project or QgsProject.instance()
         self._session = session
+        self._iface = iface
 
     # ==========================================================
     # WMS Import (Raster)
@@ -147,15 +151,39 @@ class ImportService:
             # Jika WFS berhasil valid, verifikasi apakah fiturnya benar-benar dapat dibaca
             if qgs_layer.isValid():
                 has_features = False
+                first_feat = None
                 try:
-                    for _ in qgs_layer.getFeatures(QgsFeatureRequest().setLimit(1)):
+                    for f in qgs_layer.getFeatures(QgsFeatureRequest().setLimit(1)):
+                        first_feat = f
                         has_features = True
                         break
                 except Exception as f_err:
                     logger.warning(f"Error membaca fitur WFS untuk '{layer.display_name}': {f_err}")
                     has_features = False
 
-                if has_features or qgs_layer.featureCount() > 0:
+                if has_features and first_feat and first_feat.hasGeometry():
+                    bbox = first_feat.geometry().boundingBox()
+                    # Deteksi anomali (111, -90) akibat bug transformasi GeoServer untuk layer tertentu
+                    if round(bbox.xMinimum()) == 111 and round(bbox.yMinimum()) == -90:
+                        logger.warning(
+                            f"WFS layer '{layer.display_name}' mengalami distorsi koordinat (111, -90) dari GeoServer. "
+                            f"Melakukan fallback otomatis ke GeoJSON / GeoPackage agar data presisi..."
+                        )
+                        geojson_res = self.import_geojson(layer)
+                        if geojson_res.success:
+                            return geojson_res
+                        gpkg_res = self.import_geopackage(layer)
+                        if gpkg_res.success:
+                            return gpkg_res
+
+                    self._fix_layer_crs_if_mismatched(qgs_layer)
+                    qgs_layer.updateExtents()
+                    qgs_layer.setReadOnly(False)
+                    return self._validate_and_add(qgs_layer, layer, format_desc="WFS Vector")
+
+                elif has_features or qgs_layer.featureCount() > 0:
+                    self._fix_layer_crs_if_mismatched(qgs_layer)
+                    qgs_layer.updateExtents()
                     qgs_layer.setReadOnly(False)
                     return self._validate_and_add(qgs_layer, layer, format_desc="WFS Vector")
 
@@ -500,6 +528,84 @@ class ImportService:
     # Helper: Validation & Project Insertion
     # ==========================================================
 
+    def _fix_layer_crs_if_mismatched(self, qgs_layer: QgsVectorLayer) -> None:
+        """
+        Mendeteksi jika koordinat geometri fitur adalah bujur/lintang derajat desimal
+        (misal rentang Indonesia bujur 95..145, lintang -15..15) namun CRS yang terdaftar
+        adalah Projected CRS berbasis meter (misal EPSG:9489 DGN95 / TM-3 atau EPSG:32749).
+        Jika terdeteksi mismatch, secara otomatis memperbaiki CRS layer ke EPSG:4326 (WGS 84)
+        dan menyegarkan extent agar layer dapat dirender tepat di kanvas QGIS.
+        """
+        if not qgs_layer or not qgs_layer.isValid():
+            return
+
+        try:
+            # Ambil sampel fitur pertama
+            first_feat = None
+            for f in qgs_layer.getFeatures(QgsFeatureRequest().setLimit(1)):
+                first_feat = f
+                break
+
+            if not first_feat or not first_feat.hasGeometry():
+                return
+
+            geom = first_feat.geometry()
+            bbox = geom.boundingBox()
+
+            # Cek apakah koordinat berada dalam derajat geografis bujur dan lintang
+            # dan bukan satuan meter (meter biasanya bernilai > 10.000 atau jutaan)
+            if -180.0 <= bbox.xMinimum() <= 180.0 and -90.0 <= bbox.yMinimum() <= 90.0 and \
+               -180.0 <= bbox.xMaximum() <= 180.0 and -90.0 <= bbox.yMaximum() <= 90.0:
+                current_crs = qgs_layer.crs().authid()
+                # Jika CRS saat ini bukan sistem geografis derajat
+                if current_crs not in ("EPSG:4326", "EPSG:4979", "OGC:CRS84"):
+                    logger.info(
+                        f"CRS mismatch terdeteksi pada layer '{qgs_layer.name()}': "
+                        f"CRS terdaftar={current_crs} tetapi geometri berupa derajat desimal "
+                        f"({bbox.xMinimum():.4f}, {bbox.yMinimum():.4f}). "
+                        f"Menyesuaikan CRS layer ke EPSG:4326..."
+                    )
+                    qgs_layer.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+                    qgs_layer.updateExtents()
+        except Exception as e:
+            logger.warning(f"Error saat verifikasi CRS layer: {e}")
+
+    def _zoom_to_layer(self, qgs_layer: QgsMapLayer) -> None:
+        """
+        Menyegarkan Map Canvas dan melakukan zoom to layer secara otomatis
+        sehingga pengguna langsung melihat data di kanvas peta QGIS.
+        """
+        iface = self._iface
+        if not iface:
+            try:
+                from qgis.utils import iface as global_iface
+                iface = global_iface
+            except Exception:
+                iface = None
+
+        if not iface or not hasattr(iface, "mapCanvas"):
+            return
+
+        try:
+            canvas = iface.mapCanvas()
+            if not canvas:
+                return
+
+            if hasattr(iface, "setActiveLayer"):
+                iface.setActiveLayer(qgs_layer)
+
+            if isinstance(qgs_layer, QgsVectorLayer):
+                qgs_layer.updateExtents()
+
+            extent = qgs_layer.extent()
+            if not extent.isEmpty() and extent.isFinite():
+                extent.scale(1.08)  # Margin 8% agar batas geometri tidak mepet ke tepi layar
+                canvas.setExtent(extent)
+                canvas.refresh()
+                logger.info(f"Auto zoom to layer '{qgs_layer.name()}' berhasil.")
+        except Exception as e:
+            logger.debug(f"Gagal melakukan auto zoom ke layer: {e}")
+
     def _validate_and_add(
         self,
         qgs_layer: QgsMapLayer,
@@ -522,6 +628,8 @@ class ImportService:
 
         # Pastikan layer vektor tidak dalam mode Read-Only agar dapat diedit di QGIS
         if isinstance(qgs_layer, QgsVectorLayer):
+            self._fix_layer_crs_if_mismatched(qgs_layer)
+            qgs_layer.updateExtents()
             qgs_layer.setReadOnly(False)
             # Simpan metadata identitas GeoNode pada layer untuk sinkronisasi WFS-T presisi
             if layer_model.pk:
@@ -536,6 +644,9 @@ class ImportService:
 
         # Tambahkan layer ke Layer Tree (Map Canvas)
         self._project.addMapLayer(qgs_layer)
+
+        # Lakukan auto-zoom ke layer agar langsung terlihat di kanvas peta QGIS
+        self._zoom_to_layer(qgs_layer)
 
         logger.info(f"Layer '{qgs_layer.name()}' ({format_desc}) berhasil ditambahkan ke QgsProject.")
         return ServiceResult.ok(

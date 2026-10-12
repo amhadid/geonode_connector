@@ -72,18 +72,17 @@ class ActivityWidget(QWidget):
         self.btn_clear.setCursor(Qt.PointingHandCursor)
         self.btn_clear.setStyleSheet("""
             QPushButton {
-                background: #FFFFFF;
-                color: #475569;
-                border: 1.5px solid #CBD5E1;
+                background: palette(base);
+                color: palette(text);
+                border: 1.5px solid palette(midlight);
                 border-radius: 6px;
                 padding: 7px 16px;
                 font-size: 8.5pt;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background: #F1F5F9;
-                border-color: #94A3B8;
-                color: #0F172A;
+                background: palette(alternate-base);
+                border-color: palette(mid);
             }
         """)
         self.btn_clear.clicked.connect(self._on_clear_clicked)
@@ -112,8 +111,8 @@ class ActivityWidget(QWidget):
             empty_card.setObjectName("emptyActCard")
             empty_card.setStyleSheet("""
                 QFrame#emptyActCard {
-                    background: #F8FAFC;
-                    border: 1px dashed #CBD5E1;
+                    background: palette(base);
+                    border: 1px dashed palette(midlight);
                     border-radius: 8px;
                     padding: 24px;
                 }
@@ -133,7 +132,7 @@ class ActivityWidget(QWidget):
 
             lbl = QLabel("Belum ada riwayat aktivitas tercatat.")
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet("color: #64748B; font-size: 9pt; font-weight: 500; border: none; background: transparent;")
+            lbl.setStyleSheet("color: palette(text); opacity: 0.7; font-size: 9pt; font-weight: 500; border: none; background: transparent;")
 
             e_layout.addWidget(ico)
             e_layout.addWidget(lbl)
@@ -152,13 +151,13 @@ class ActivityWidget(QWidget):
         card.setObjectName("actCard")
         card.setStyleSheet("""
             QFrame#actCard {
-                background: white;
-                border: 1px solid #E2E8F0;
+                background: palette(base);
+                border: 1px solid palette(midlight);
                 border-radius: 8px;
             }
             QFrame#actCard:hover {
-                border-color: #CBD5E1;
-                background: #F8FAFC;
+                border-color: palette(mid);
+                background: palette(alternate-base);
             }
             QLabel {
                 border: none;
@@ -190,11 +189,11 @@ class ActivityWidget(QWidget):
 
         # Meta row: Timestamp + username (tanpa outline)
         meta_lbl = QLabel(f"{act.formatted_time}   •   {act.username}")
-        meta_lbl.setStyleSheet("color: #64748B; font-size: 8pt; font-weight: 500; border: none; background: transparent;")
+        meta_lbl.setStyleSheet("color: palette(text); opacity: 0.7; font-size: 8pt; font-weight: 500; border: none; background: transparent;")
 
         # Description / isi log aktivitas (tanpa outline)
         desc_lbl = QLabel(act.description)
-        desc_lbl.setStyleSheet("color: #1E293B; font-size: 9pt; font-weight: 600; border: none; background: transparent;")
+        desc_lbl.setStyleSheet("color: palette(text); font-size: 9pt; font-weight: 600; border: none; background: transparent;")
         desc_lbl.setWordWrap(True)
 
         text_layout.addWidget(meta_lbl)

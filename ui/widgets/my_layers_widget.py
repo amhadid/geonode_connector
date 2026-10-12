@@ -263,7 +263,7 @@ class MyLayersWidget(QWidget):
         self.btn_lihat_data.setIcon(QgsApplication.getThemeIcon("mActionOpenTable.svg"))
         self.btn_lihat_data.setStyleSheet("""
             QPushButton {
-                background: #FFFFFF;
+                background: palette(base);
                 color: #059669;
                 border: 1.5px solid #10B981;
                 border-radius: 7px;
@@ -320,7 +320,7 @@ class MyLayersWidget(QWidget):
         self.btn_hapus_layer.setIcon(QgsApplication.getThemeIcon("mActionDeleteSelected.svg"))
         self.btn_hapus_layer.setStyleSheet("""
             QPushButton {
-                background: #FFFFFF;
+                background: palette(base);
                 color: #DC2626;
                 border: 1.5px solid #FECACA;
                 border-radius: 7px;
@@ -551,7 +551,7 @@ class MyLayersWidget(QWidget):
         self.btn_upload_wizard.setIcon(QgsApplication.getThemeIcon("mActionSharingExport.svg"))
         self.btn_upload_wizard.setStyleSheet("""
             QPushButton {
-                background: #FFFFFF;
+                background: palette(base);
                 color: #059669;
                 border: 1.5px solid #10B981;
                 border-radius: 6px;

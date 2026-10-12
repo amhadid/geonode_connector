@@ -1,136 +1,119 @@
 /* ==========================================================
    Dataset Browser Modern Styling (dataset.qss)
+   Selaras dengan Tema Warna Bawaan QGIS (Light / Dark)
    ========================================================== */
 
-QWidget {
-    background: #FFFFFF;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    color: #1E293B;
+/* Pastikan widget induk mewarisi background jendela QGIS */
+DatasetWidget {
+    background-color: transparent;
 }
 
 /* ----------------------------------------------------------
-   Search Bar
+   Search Bar Row Modern
 ---------------------------------------------------------- */
 QLineEdit#searchEdit {
-    background: #FFFFFF;
-    border: 1.5px solid #E2E8F0;
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 9pt;
-    color: #1E293B;
+    background-color: palette(base);
+    color: palette(text);
+    border: 1.5px solid palette(midlight);
+    border-radius: 7px;
+    padding: 7px 14px;
+    font-size: 8.5pt;
 }
 
 QLineEdit#searchEdit:hover {
-    border-color: #CBD5E1;
+    border-color: #10B981;
 }
 
 QLineEdit#searchEdit:focus {
-    border: 1.5px solid #10B981;
-    background: #FFFFFF;
+    border: 1.5px solid #059669;
+    background-color: palette(base);
 }
 
 QPushButton#refreshButton {
-    background: #F8FAFC;
-    border: 1.5px solid #E2E8F0;
-    border-radius: 8px;
-    color: #475569;
-    font-size: 11pt;
+    background-color: palette(button);
+    border: 1.5px solid palette(midlight);
+    border-radius: 7px;
+    color: palette(button-text);
+    font-size: 10pt;
+    padding: 6px 12px;
 }
 
 QPushButton#refreshButton:hover {
-    background: #F1F5F9;
-    border-color: #CBD5E1;
-    color: #0F172A;
+    background-color: rgba(16, 185, 129, 0.12);
+    border-color: #10B981;
+    color: #059669;
 }
 
 QPushButton#refreshButton:pressed {
-    background: #E2E8F0;
+    background-color: rgba(16, 185, 129, 0.22);
 }
 
 /* ----------------------------------------------------------
-   Table Widget Modern
+   Table View Modern
 ---------------------------------------------------------- */
-QTableWidget {
-    background: #FFFFFF;
-    alternate-background-color: #FAFAFB;
-    border: 1px solid #E2E8F0;
+QTableView {
+    background-color: palette(base);
+    alternate-background-color: rgba(0, 0, 0, 0.02);
+    border: 1px solid palette(midlight);
     border-radius: 8px;
     gridline-color: transparent;
-    selection-background-color: #ECFDF5;
-    selection-color: #064E3B;
+    selection-background-color: rgba(16, 185, 129, 0.18);
+    selection-color: palette(text);
+    color: palette(text);
 }
 
 QHeaderView::section {
-    background: #F8FAFC;
-    color: #475569;
+    background-color: palette(window);
+    color: palette(window-text);
     font-size: 8pt;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
     padding: 8px 10px;
     border: none;
-    border-bottom: 2px solid #E2E8F0;
+    border-bottom: 2px solid palette(midlight);
 }
 
-QTableWidget::item {
-    padding: 6px 10px;
-    border-bottom: 1px solid #F1F5F9;
+QTableView::item {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 
-QTableWidget::item:selected {
-    background-color: #ECFDF5;
-    color: #064E3B;
+QTableView::item:selected {
+    background-color: rgba(16, 185, 129, 0.16);
+    color: palette(text);
+    font-weight: 600;
 }
 
-QTableWidget::item:hover {
-    background-color: #F8FAFC;
-}
-
-/* ----------------------------------------------------------
-   Checkbox
----------------------------------------------------------- */
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
-    border: 1.5px solid #CBD5E1;
-    background: #FFFFFF;
-}
-
-QCheckBox::indicator:hover {
-    border-color: #10B981;
-}
-
-QCheckBox::indicator:checked {
-    background: #10B981;
-    border-color: #10B981;
-    image: none;
+QTableView::item:hover {
+    background-color: rgba(16, 185, 129, 0.06);
 }
 
 /* ----------------------------------------------------------
-   Action Buttons
+   Action Buttons Modern
 ---------------------------------------------------------- */
 QPushButton#importButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669);
     color: #FFFFFF;
     border: none;
-    border-radius: 7px;
-    padding: 10px 22px;
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+    padding: 8px 18px;
     font-weight: 700;
     font-size: 8.5pt;
     letter-spacing: 0.3px;
 }
 
 QPushButton#importButton:hover {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #34D399, stop:1 #10B981);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857);
 }
 
 QPushButton#importButton:pressed {
-    background: #047857;
+    background: #064E3B;
 }
 
 QPushButton#importButton:disabled {
-    background: #E2E8F0;
+    background: palette(midlight);
     color: #94A3B8;
 }
 
@@ -138,7 +121,8 @@ QPushButton#importMenuButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669);
     color: #FFFFFF;
     border: none;
-    border-radius: 7px;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
     padding: 0px;
     margin: 0px;
     font-size: 7.5pt;
@@ -147,55 +131,60 @@ QPushButton#importMenuButton {
 }
 
 QPushButton#importMenuButton:hover {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #34D399, stop:1 #10B981);
-}
-
-QPushButton#importMenuButton:pressed {
-    background: #047857;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857);
 }
 
 QPushButton#importMenuButton:disabled {
-    background: #E2E8F0;
+    background: palette(midlight);
     color: #94A3B8;
 }
 
 QPushButton#detailButton {
-    background: #FFFFFF;
-    color: #334155;
-    border: 1.5px solid #CBD5E1;
-    border-radius: 7px;
-    padding: 10px 18px;
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(midlight);
+    border-radius: 6px;
+    padding: 8px 16px;
     font-weight: 600;
     font-size: 8.5pt;
 }
 
 QPushButton#detailButton:hover {
+    background-color: rgba(16, 185, 129, 0.12);
     border-color: #10B981;
     color: #059669;
-    background: #F0FDF4;
-}
-
-QPushButton#detailButton:pressed {
-    background: #DCFCE7;
-}
-
-QPushButton#detailButton:disabled {
-    border-color: #E2E8F0;
-    color: #94A3B8;
 }
 
 QPushButton#refreshBottomButton {
-    background: #FFFFFF;
-    color: #334155;
-    border: 1.5px solid #CBD5E1;
-    border-radius: 7px;
-    padding: 10px 18px;
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(midlight);
+    border-radius: 6px;
+    padding: 8px 16px;
     font-weight: 600;
     font-size: 8.5pt;
 }
 
 QPushButton#refreshBottomButton:hover {
+    background-color: rgba(16, 185, 129, 0.12);
     border-color: #10B981;
     color: #059669;
-    background: #F0FDF4;
+}
+
+QPushButton#exportButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0284C7, stop:1 #0369A1);
+    color: white;
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 8px 16px;
+    border: none;
+    font-size: 8.5pt;
+}
+
+QPushButton#exportButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0369A1, stop:1 #075985);
+}
+
+QPushButton#exportButton:pressed {
+    background: #0C4A6E;
 }

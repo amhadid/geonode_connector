@@ -619,11 +619,10 @@ class SyncService:
             if "<wfs:SUCCESS" in resp_text:
                 logger.info(f"WFS-T HTTP Transaction sukses tersimpan di GeoServer untuk {typename}!")
 
-                # Simpan perubahan di layer lokal QGIS
-                if layer.isEditable() and layer.isModified():
-                    layer.commitChanges(stopEditing=False)
+                # Bersihkan edit buffer lokal tanpa memicu commit internal QGIS yang timeout
+                if layer.isEditable():
+                    layer.rollBack()
 
-                layer.dataProvider().reloadData()
                 layer.triggerRepaint()
 
                 # Refresh GeoServer Cache
@@ -661,58 +660,35 @@ class SyncService:
 
     def _sync_wfs_layer(self, layer: QgsVectorLayer, changes: Dict[str, Any]) -> ServiceResult:
         """
-        Sinkronisasi layer WFS via WFS-T dengan fallback otomatis ke PostGIS database GeoNode.
+        Sinkronisasi layer WFS GeoNode.
+        Mengutamakan transaksi langsung ke basis data PostGIS atau transaksi HTTP WFS-T
+        terkontrol dengan kredensial admin, menghindari deadlock/timeout pada provider internal QGIS.
         """
         self._ensure_wfs_datasource_compatibility(layer)
 
-        has_schema_changes = bool(changes.get("added_fields")) or (len(changes.get("added_fields", [])) > 0)
-        if has_schema_changes:
-            logger.info("Terdeteksi penambahan field baru. Menyimpan langsung ke database PostGIS GeoNode...")
+        # 1. Coba simpan langsung ke PostGIS jika host/port database tersedia
+        conn = self._get_postgis_connection()
+        if conn:
+            conn.close()
+            logger.info("Koneksi PostGIS tersedia. Menyinkronkan perubahan layer langsung ke PostGIS...")
             pg_result = self._sync_layer_to_postgis(layer, changes)
             if pg_result.success:
                 if layer.isEditable():
                     layer.rollBack()
-                layer.dataProvider().reloadData()
-                layer.updateFields()
                 layer.triggerRepaint()
                 return pg_result
-            return pg_result
+            logger.warning(
+                f"Sinkronisasi PostGIS gagal ({pg_result.message}). Mengalihkan ke transaksi WFS-T HTTP..."
+            )
 
-        wfs_t_success = False
-        if layer.isEditable() and layer.isModified():
-            logger.info("Menyimpan perubahan ke GeoServer via WFS-T commitChanges()...")
-            wfs_t_success = layer.commitChanges(stopEditing=False)
-
-            if wfs_t_success:
-                layer.triggerRepaint()
-                self._reset_and_reload_geoserver()
-                raw_name = layer.name().split(":")[-1]
-                self._trigger_geonode_updatelayers(raw_name)
-                logger.info("Commit WFS-T berhasil disimpan ke GeoServer!")
-                return ServiceResult.ok(
-                    message=f"Sinkronisasi berhasil! {changes['total']} perubahan tersimpan di GeoNode.",
-                    data=changes,
-                )
-            else:
-                errors = layer.commitErrors()
-                logger.warning(
-                    f"Commit WFS-T langsung ditolak oleh provider/GeoServer ({errors}). Mengalihkan ke transaksi WFS-T HTTP langsung..."
-                )
-
-        # Coba transaksi WFS-T via HTTP POST langsung
+        # 2. Coba transaksi WFS-T via HTTP POST langsung ke GeoServer
+        logger.info("Menjalankan transaksi WFS-T HTTP terkontrol ke GeoServer...")
         http_result = self._sync_via_wfst_http(layer, changes)
         if http_result.success:
-            return http_result
-
-        # Jika WFS-T HTTP gagal, coba simpan via backend PostGIS
-        pg_result = self._sync_layer_to_postgis(layer, changes)
-        if pg_result.success:
             if layer.isEditable():
                 layer.rollBack()
-            layer.dataProvider().reloadData()
-            layer.updateFields()
             layer.triggerRepaint()
-            return pg_result
+            return http_result
 
         return http_result
 
@@ -880,6 +856,14 @@ class SyncService:
                     cur.execute(insert_sql, sql_params)
                     inserted_count += 1
 
+            # Tangani penghapusan fitur dari edit buffer lokal jika ada
+            deleted_count = 0
+            if layer.isEditable() and layer.editBuffer() and pk_col:
+                deleted_fids = layer.editBuffer().deletedFeatureIds()
+                for dfid in deleted_fids:
+                    cur.execute(f'DELETE FROM "{table_name}" WHERE "{pk_col}" = %s', (dfid,))
+                    deleted_count += 1
+
             conn.commit()
             conn.close()
 
@@ -1002,16 +986,12 @@ class SyncService:
         return self._reset_and_reload_geoserver()
 
     def _trigger_geonode_updatelayers(self, table_name: str) -> None:
-        """Memicu pembaruan atribut layer GeoNode di latar belakang tanpa menghambat UI."""
+        """Memicu pembaruan atribut katalog GeoServer secara aman tanpa subprocess lokal."""
         try:
-            subprocess.Popen(
-                ["docker", "exec", "-i", "django4geonode_project", "python", "manage.py", "updatelayers", f"--filter={table_name}"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            logger.info(f"Triggered GeoNode updatelayers for {table_name}")
+            self._reset_and_reload_geoserver()
+            logger.info(f"Katalog GeoServer berhasil disegarkan untuk tabel: {table_name}")
         except Exception as e:
-            logger.warning(f"Tidak dapat memicu updatelayers: {e}")
+            logger.debug(f"Pemberitahuan reload GeoServer: {e}")
 
     # ==========================================================
     # Revert Changes

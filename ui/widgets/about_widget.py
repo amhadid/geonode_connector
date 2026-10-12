@@ -55,8 +55,8 @@ class AboutWidget(QWidget):
         card.setObjectName("aboutCard")
         card.setStyleSheet("""
             QFrame#aboutCard {
-                background: white;
-                border: 1px solid #E2E8F0;
+                background: palette(base);
+                border: 1px solid palette(midlight);
                 border-radius: 10px;
                 padding: 16px;
             }
@@ -82,7 +82,7 @@ class AboutWidget(QWidget):
 
         # Title & Subtitle
         lbl_title = QLabel(PLUGIN_NAME)
-        lbl_title.setStyleSheet("font-size: 13pt; font-weight: bold; color: #0F172A; border: none; background: transparent;")
+        lbl_title.setStyleSheet("font-size: 13pt; font-weight: bold; color: palette(text); border: none; background: transparent;")
         lbl_title.setAlignment(Qt.AlignCenter)
 
         lbl_version = QLabel(f"Versi {PLUGIN_VERSION}")
@@ -93,7 +93,7 @@ class AboutWidget(QWidget):
             "Plugin integrasi data spasial resmi antara GeoNode / GeoServer\n"
             "dan QGIS Desktop untuk Pemerintah Kota Yogyakarta."
         )
-        lbl_desc.setStyleSheet("color: #64748B; font-size: 8.5pt; line-height: 1.4; border: none; background: transparent;")
+        lbl_desc.setStyleSheet("color: palette(text); opacity: 0.8; font-size: 8.5pt; line-height: 1.4; border: none; background: transparent;")
         lbl_desc.setAlignment(Qt.AlignCenter)
 
         c_layout.addWidget(lbl_logo)
@@ -110,8 +110,8 @@ class AboutWidget(QWidget):
         detail_card.setObjectName("aboutDetailCard")
         detail_card.setStyleSheet("""
             QFrame#aboutDetailCard {
-                background: #F8FAFC;
-                border: 1px solid #E2E8F0;
+                background: palette(base);
+                border: 1px solid palette(midlight);
                 border-radius: 8px;
                 padding: 12px;
             }
@@ -136,11 +136,11 @@ class AboutWidget(QWidget):
         row.setSpacing(10)
 
         lbl = QLabel(label)
-        lbl.setStyleSheet("color: #64748B; font-size: 8.5pt; font-weight: 500; border: none; background: transparent;")
+        lbl.setStyleSheet("color: palette(text); opacity: 0.7; font-size: 8.5pt; font-weight: 500; border: none; background: transparent;")
         lbl.setFixedWidth(130)
 
         val = QLabel(value)
-        val.setStyleSheet("color: #1E293B; font-size: 8.5pt; font-weight: 600; border: none; background: transparent;")
+        val.setStyleSheet("color: palette(text); font-size: 8.5pt; font-weight: 600; border: none; background: transparent;")
 
         row.addWidget(lbl)
         row.addWidget(val)

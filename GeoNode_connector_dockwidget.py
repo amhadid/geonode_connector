@@ -174,9 +174,9 @@ class GeoNodeConnectorDialog(QMainWindow):
         self.nav_scroll.setFixedHeight(46)
         self.nav_scroll.setStyleSheet("""
             QScrollArea#navScrollArea {
-                background: #FFFFFF;
+                background: palette(window);
                 border: none;
-                border-bottom: 1.5px solid #E2E8F0;
+                border-bottom: 1.5px solid palette(midlight);
             }
             QScrollArea#navScrollArea QScrollBar:horizontal {
                 height: 3px;
@@ -185,7 +185,7 @@ class GeoNodeConnectorDialog(QMainWindow):
                 border: none;
             }
             QScrollArea#navScrollArea QScrollBar::handle:horizontal {
-                background: #CBD5E1;
+                background: palette(midlight);
                 border-radius: 1.5px;
                 min-width: 24px;
             }
@@ -207,7 +207,7 @@ class GeoNodeConnectorDialog(QMainWindow):
         self.nav_container.setObjectName("navContainer")
         self.nav_container.setStyleSheet("""
             QWidget#navContainer {
-                background: #FFFFFF;
+                background: transparent;
                 border: none;
             }
         """)
@@ -279,8 +279,8 @@ class GeoNodeConnectorDialog(QMainWindow):
         self.header_widget = QFrame()
         self.header_widget.setStyleSheet("""
             QFrame {
-                background: #FFFFFF;
-                border-bottom: 1.5px solid #E2E8F0;
+                background: palette(window);
+                border-bottom: 1px solid palette(midlight);
             }
         """)
         h_layout = QHBoxLayout(self.header_widget)
@@ -295,8 +295,8 @@ class GeoNodeConnectorDialog(QMainWindow):
         user_chip = QFrame()
         user_chip.setStyleSheet("""
             QFrame {
-                background: #ECFDF5;
-                border: 1px solid #A7F3D0;
+                background: palette(base);
+                border: 1px solid palette(midlight);
                 border-radius: 6px;
             }
         """)
@@ -309,10 +309,10 @@ class GeoNodeConnectorDialog(QMainWindow):
         lbl_u_icon.setStyleSheet("border: none; background: transparent;")
 
         lbl_u_title = QLabel("User:")
-        lbl_u_title.setStyleSheet("color: #065F46; font-size: 8pt; font-weight: 500; border: none; background: transparent;")
+        lbl_u_title.setStyleSheet("color: palette(text); opacity: 0.8; font-size: 8pt; font-weight: 500; border: none; background: transparent;")
 
         self.lbl_header_user = QLabel("admin_demo")
-        self.lbl_header_user.setStyleSheet("color: #064E3B; font-size: 8.5pt; font-weight: 700; border: none; background: transparent;")
+        self.lbl_header_user.setStyleSheet("color: #10B981; font-size: 8.5pt; font-weight: 700; border: none; background: transparent;")
 
         u_layout.addWidget(lbl_u_icon)
         u_layout.addWidget(lbl_u_title)
@@ -322,8 +322,8 @@ class GeoNodeConnectorDialog(QMainWindow):
         server_chip = QFrame()
         server_chip.setStyleSheet("""
             QFrame {
-                background: #F8FAFC;
-                border: 1px solid #E2E8F0;
+                background: palette(base);
+                border: 1px solid palette(midlight);
                 border-radius: 6px;
             }
         """)
@@ -336,10 +336,10 @@ class GeoNodeConnectorDialog(QMainWindow):
         lbl_s_icon.setStyleSheet("border: none; background: transparent;")
 
         lbl_s_title = QLabel("Server:")
-        lbl_s_title.setStyleSheet("color: #64748B; font-size: 8pt; font-weight: 500; border: none; background: transparent;")
+        lbl_s_title.setStyleSheet("color: palette(text); opacity: 0.8; font-size: 8pt; font-weight: 500; border: none; background: transparent;")
 
         self.lbl_header_server = QLabel("http://localhost")
-        self.lbl_header_server.setStyleSheet("color: #334155; font-size: 8.5pt; font-weight: 600; border: none; background: transparent;")
+        self.lbl_header_server.setStyleSheet("color: palette(text); font-size: 8.5pt; font-weight: 600; border: none; background: transparent;")
 
         s_layout.addWidget(lbl_s_icon)
         s_layout.addWidget(lbl_s_title)
@@ -356,9 +356,9 @@ class GeoNodeConnectorDialog(QMainWindow):
         self.btn_header_logout.setStyleSheet("""
             QPushButton#logoutButton {
                 color: #DC2626;
-                border: 1.5px solid #FECACA;
+                border: 1px solid #FECACA;
                 border-radius: 6px;
-                background: #FEF2F2;
+                background: palette(base);
                 padding: 6px 14px;
                 font-weight: 700;
                 font-size: 8pt;
@@ -386,7 +386,7 @@ class GeoNodeConnectorDialog(QMainWindow):
     def _create_services(self) -> None:
         self.dataset_api = DatasetAPI()
         self.layer_service = LayerService(dataset_api=self.dataset_api)
-        self.import_service = ImportService()
+        self.import_service = ImportService(iface=self.iface)
 
     def _create_controllers(self) -> None:
         self.login_controller = LoginController(widget=self.login_tab)
@@ -399,6 +399,7 @@ class GeoNodeConnectorDialog(QMainWindow):
             layer_service=self.layer_service,
             import_service=self.import_service,
             my_layers_widget=self.my_layers_tab,
+            iface=self.iface,
         )
         if self.my_layers_tab:
             self.my_layers_tab.layer_service = self.layer_service

@@ -113,49 +113,50 @@ class ServerWidget(QWidget):
         form_card.setObjectName("formCard")
         form_card.setStyleSheet("""
             QFrame#formCard {
-                background: #FFFFFF;
-                border: 1px solid #E2E8F0;
+                background: palette(base);
+                border: 1px solid palette(midlight);
                 border-radius: 10px;
             }
             QLabel {
                 border: none;
                 background: transparent;
+                color: palette(text);
             }
             QLineEdit {
-                border: 1.5px solid #CBD5E1;
+                border: 1.5px solid palette(midlight);
                 border-radius: 6px;
                 padding: 8px 12px;
-                background: #FFFFFF;
-                color: #1E293B;
+                background: palette(base);
+                color: palette(text);
                 font-size: 9pt;
             }
             QLineEdit:hover {
-                border-color: #94A3B8;
+                border-color: palette(mid);
             }
             QLineEdit:focus {
                 border: 1.5px solid #10B981;
-                background: #FFFFFF;
+                background: palette(base);
             }
             QComboBox {
-                border: 1.5px solid #CBD5E1;
+                border: 1.5px solid palette(midlight);
                 border-radius: 6px;
                 padding: 8px 12px;
-                background: #FFFFFF;
-                color: #1E293B;
+                background: palette(base);
+                color: palette(text);
                 font-size: 9pt;
             }
             QComboBox:hover {
-                border-color: #94A3B8;
+                border-color: palette(mid);
             }
             QComboBox:focus {
                 border: 1.5px solid #10B981;
             }
             QSpinBox {
-                border: 1.5px solid #CBD5E1;
+                border: 1.5px solid palette(midlight);
                 border-radius: 6px;
                 padding: 6px 10px;
-                background: #FFFFFF;
-                color: #1E293B;
+                background: palette(base);
+                color: palette(text);
                 font-size: 9pt;
             }
             QSpinBox:focus {
@@ -167,7 +168,7 @@ class ServerWidget(QWidget):
                 border: none;
             }
             QCheckBox {
-                color: #334155;
+                color: palette(text);
                 font-size: 8.5pt;
                 font-weight: 500;
                 spacing: 8px;
@@ -177,9 +178,9 @@ class ServerWidget(QWidget):
             QCheckBox::indicator {
                 width: 18px;
                 height: 18px;
-                border: 1.5px solid #CBD5E1;
+                border: 1.5px solid palette(midlight);
                 border-radius: 4px;
-                background: #FFFFFF;
+                background: palette(base);
             }
             QCheckBox::indicator:hover {
                 border-color: #10B981;
@@ -326,7 +327,7 @@ class ServerWidget(QWidget):
         self.btn_test.setIcon(QgsApplication.getThemeIcon("mIconConnect.svg"))
         self.btn_test.setStyleSheet("""
             QPushButton {
-                background: #FFFFFF;
+                background: palette(base);
                 color: #059669;
                 border: 1.5px solid #10B981;
                 border-radius: 7px;
@@ -342,9 +343,9 @@ class ServerWidget(QWidget):
                 background: #D1FAE5;
             }
             QPushButton:disabled {
-                background: #F8FAFC;
-                color: #94A3B8;
-                border-color: #E2E8F0;
+                background: palette(window);
+                color: palette(mid);
+                border-color: palette(midlight);
             }
         """)
 

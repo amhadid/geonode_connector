@@ -31,10 +31,12 @@ class ImportController:
         layer_service: LayerService,
         import_service: Optional[ImportService] = None,
         my_layers_widget=None,
+        iface=None,
     ):
         self.widget = widget
         self.layer_service = layer_service
-        self.import_service = import_service or ImportService()
+        self.iface = iface
+        self.import_service = import_service or ImportService(iface=self.iface)
         self.my_layers_widget = my_layers_widget
 
         self._connect_signals()
@@ -125,16 +127,42 @@ class ImportController:
                 description=f'Import layer "{layer.title or layer.name}"',
             )
 
+            # Auto-zoom to layer di Map Canvas QGIS
+            layer_id = ""
+            if result.data and isinstance(result.data, dict):
+                layer_id = result.data.get("layer_id", "")
+            if not layer_id:
+                layer_id = f"geonode_{layer.name}"
+
+            from qgis.core import QgsProject
+            qgs_l = QgsProject.instance().mapLayer(layer_id)
+
+            try:
+                if qgs_l:
+                    qgs_l.updateExtents()
+                    canvas_iface = self.iface
+                    if not canvas_iface:
+                        try:
+                            from qgis.utils import iface as global_iface
+                            canvas_iface = global_iface
+                        except Exception:
+                            canvas_iface = None
+
+                    if canvas_iface and hasattr(canvas_iface, "mapCanvas"):
+                        canvas = canvas_iface.mapCanvas()
+                        if canvas:
+                            if hasattr(canvas_iface, "setActiveLayer"):
+                                canvas_iface.setActiveLayer(qgs_l)
+                            ext = qgs_l.extent()
+                            if not ext.isEmpty() and ext.isFinite():
+                                ext.scale(1.08)
+                                canvas.setExtent(ext)
+                                canvas.refresh()
+            except Exception as zoom_err:
+                logger.debug(f"Auto zoom canvas error: {zoom_err}")
+
             # Register to My Layers (Mockup Screen 4)
             if self.my_layers_widget:
-                layer_id = ""
-                if result.data and isinstance(result.data, dict):
-                    layer_id = result.data.get("layer_id", "")
-                if not layer_id:
-                    layer_id = f"geonode_{layer.name}"
-
-                from qgis.core import QgsProject
-                qgs_l = QgsProject.instance().mapLayer(layer_id)
                 feat_count = qgs_l.featureCount() if qgs_l and hasattr(qgs_l, "featureCount") else 0
                 crs_auth = qgs_l.crs().authid() if qgs_l and hasattr(qgs_l, "crs") else (layer.srid or "EPSG:4326")
 
@@ -145,6 +173,8 @@ class ImportController:
                     crs=crs_auth,
                     features=feat_count,
                 )
+                if hasattr(self.my_layers_widget, "sync_with_qgis_project"):
+                    self.my_layers_widget.sync_with_qgis_project()
         else:
             self.widget.set_status("Gagal melakukan import.")
             if hasattr(self.widget, "show_notification"):

@@ -3,159 +3,99 @@
    ========================================================== */
 
 QWidget {
-
-    font-family: "Segoe UI";
-
+    font-family: "Segoe UI", sans-serif;
     font-size: 9pt;
-
-    color: #2d2d2d;
-
+    color: palette(text);
     background: transparent;
-
 }
-
 
 /* ==========================================================
    Header
    ========================================================== */
 
 #headerWidget {
-
     background: transparent;
-
 }
-
 
 #logoLabel {
-
     background: transparent;
-
     border: none;
-
 }
-
 
 #titleLabel {
-
     background: transparent;
-
     border: none;
-
-    font-size: 22px;
-
+    font-size: 20px;
     font-weight: 700;
-
-    color: #1f1f1f;
-
+    color: palette(text);
 }
-
 
 #subtitleLabel {
-
     background: transparent;
-
     border: none;
-
-    font-size: 18px;
-
+    font-size: 15px;
     font-weight: 500;
-
-    color: #6b6b6b;
-
+    color: palette(text);
+    opacity: 0.7;
 }
-
 
 /* ==========================================================
    Form Label
    ========================================================== */
 
 #fieldLabel {
-
     background: transparent;
-
     border: none;
-
     font-weight: 600;
-
-    color: #444444;
-
+    color: palette(text);
     padding-bottom: 2px;
-
 }
-
 
 /* ==========================================================
    Line Edit
    ========================================================== */
 
 QLineEdit {
-
-    background: white;
-
-    border: 1px solid #d7d7d7;
-
+    background: palette(base);
+    color: palette(text);
+    border: 1px solid palette(midlight);
     border-radius: 7px;
-
     padding: 0px 10px;
-
-    selection-background-color: #2E9E55;
-
+    selection-background-color: #10B981;
 }
-
 
 QLineEdit:hover {
-
-    border: 1px solid #7fc68f;
-
+    border: 1px solid #10B981;
 }
-
 
 QLineEdit:focus {
-
-    border: 1px solid #2E9E55;
-
+    border: 1.5px solid #10B981;
 }
-
 
 /* ==========================================================
    Checkbox
    ========================================================== */
 
 QCheckBox {
-
     background: transparent;
-
+    color: palette(text);
     spacing: 8px;
-
 }
-
 
 QCheckBox::indicator {
-
     width: 18px;
-
     height: 18px;
-
 }
-
 
 QCheckBox::indicator:unchecked {
-
-    border: 1px solid #BDBDBD;
-
+    border: 1px solid palette(midlight);
     border-radius: 4px;
-
-    background: white;
-
+    background: palette(base);
 }
 
-
 QCheckBox::indicator:checked {
-
-    border: 1px solid #2E9E55;
-
-    background: #2E9E55;
-
+    border: 1px solid #10B981;
+    background: #10B981;
 }
 
 
@@ -208,59 +148,38 @@ QCheckBox::indicator:checked {
    ========================================================== */
 
 #statusLabel {
-
     background: transparent;
-
     border: none;
-
-    color: #666666;
-
+    color: palette(text);
+    opacity: 0.8;
     font-size: 9pt;
-
 }
-
 
 /* ==========================================================
    Tab Widget
    ========================================================== */
 
 QTabWidget::pane {
-
     border: none;
-
     background: transparent;
-
 }
-
 
 QTabBar::tab {
-
     background: transparent;
-
     border: none;
-
     min-width: 95px;
-
     padding: 10px;
-
-    color: #666666;
-
+    color: palette(text);
+    opacity: 0.8;
     font-weight: 600;
-
 }
-
 
 QTabBar::tab:selected {
-
-    color: #2E9E55;
-
-    border-bottom: 3px solid #2E9E55;
-
+    color: #10B981;
+    border-bottom: 3px solid #10B981;
+    opacity: 1.0;
 }
 
-
 QTabBar::tab:hover {
-
-    color: #2E9E55;
-
+    color: #10B981;
 }

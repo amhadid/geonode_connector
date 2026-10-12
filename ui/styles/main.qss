@@ -1,5 +1,6 @@
 /* ==========================================================
    GeoNode Connector Modern Design System (main.qss)
+   Selaras dengan Tema Bawaan QGIS (Light / Dark Adaptive)
    ========================================================== */
 
 * {
@@ -7,34 +8,36 @@
     outline: none;
 }
 
+/* Base Widget selaras dengan warna background window QGIS */
 QWidget {
-    color: #1E293B;
-    font-size: 9pt;
+    color: palette(window-text);
+    font-size: 8.5pt;
 }
 
 QLabel {
     border: none;
     background: transparent;
+    color: palette(window-text);
 }
 
 /* ----------------------------------------------------------
-   Scrollbar Modern
+   Scrollbar Modern Halus & Minimalis
 ---------------------------------------------------------- */
 QScrollBar:vertical {
-    width: 8px;
+    width: 7px;
     background: transparent;
     margin: 0px;
     border: none;
 }
 
 QScrollBar::handle:vertical {
-    background: #CBD5E1;
-    border-radius: 4px;
-    min-height: 24px;
+    background: palette(midlight);
+    border-radius: 3.5px;
+    min-height: 28px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background: #94A3B8;
+    background: #10B981;
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
@@ -47,20 +50,20 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 }
 
 QScrollBar:horizontal {
-    height: 8px;
+    height: 7px;
     background: transparent;
     margin: 0px;
     border: none;
 }
 
 QScrollBar::handle:horizontal {
-    background: #CBD5E1;
-    border-radius: 4px;
-    min-width: 24px;
+    background: palette(midlight);
+    border-radius: 3.5px;
+    min-width: 28px;
 }
 
 QScrollBar::handle:horizontal:hover {
-    background: #94A3B8;
+    background: #10B981;
 }
 
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
@@ -68,27 +71,34 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     border: none;
 }
 
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
 /* ----------------------------------------------------------
-   Tabs Modern
+   Tabs Modern Selaras Tema QGIS
 ---------------------------------------------------------- */
 QTabWidget::pane {
-    border: none;
-    background: #FFFFFF;
+    border: 1px solid palette(midlight);
+    background-color: palette(window);
+    border-radius: 6px;
+    top: -1px;
 }
 
 QTabBar::tab {
     background: transparent;
-    padding: 10px 18px;
-    min-width: 90px;
-    color: #64748B;
+    padding: 8px 16px;
+    min-width: 80px;
+    color: palette(window-text);
     font-weight: 600;
     font-size: 8.5pt;
-    border-bottom: 2px solid transparent;
+    border-bottom: 2.5px solid transparent;
 }
 
 QTabBar::tab:hover {
-    color: #059669;
-    background: #F8FAFC;
+    color: #10B981;
+    background: rgba(16, 185, 129, 0.08);
+    border-radius: 4px 4px 0px 0px;
 }
 
 QTabBar::tab:selected {
@@ -98,41 +108,82 @@ QTabBar::tab:selected {
 }
 
 /* ----------------------------------------------------------
-   Inputs Modern
+   Inputs Modern Adaptif
 ---------------------------------------------------------- */
-QLineEdit {
-    background: #FFFFFF;
-    border: 1.5px solid #E2E8F0;
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QDateEdit, QSpinBox {
+    background-color: palette(base);
+    color: palette(text);
+    border: 1.5px solid palette(midlight);
     border-radius: 6px;
-    padding: 6px 12px;
-    color: #1E293B;
-    font-size: 9pt;
+    padding: 6px 10px;
+    font-size: 8.5pt;
     selection-background-color: #A7F3D0;
     selection-color: #064E3B;
 }
 
-QLineEdit:hover {
-    border-color: #CBD5E1;
+QLineEdit:hover, QTextEdit:hover, QComboBox:hover {
+    border-color: #10B981;
 }
 
-QLineEdit:focus {
-    border-color: #10B981;
-    background: #FFFFFF;
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
+    border-color: #059669;
+    background-color: palette(base);
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 22px;
+    border-left: 1px solid palette(midlight);
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: palette(base);
+    color: palette(text);
+    border: 1px solid palette(midlight);
+    border-radius: 6px;
+    selection-background-color: rgba(16, 185, 129, 0.15);
+    selection-color: #059669;
+    padding: 4px;
 }
 
 /* ----------------------------------------------------------
    Buttons Modern
 ---------------------------------------------------------- */
 QPushButton {
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(midlight);
     border-radius: 6px;
     font-weight: 600;
     font-size: 8.5pt;
-    padding: 8px 16px;
+    padding: 7px 15px;
+}
+
+QPushButton:hover {
+    background-color: rgba(16, 185, 129, 0.12);
+    border-color: #10B981;
+    color: #059669;
+}
+
+QPushButton:pressed {
+    background-color: rgba(16, 185, 129, 0.22);
 }
 
 QPushButton:disabled {
-    opacity: 0.6;
+    opacity: 0.55;
     color: #94A3B8;
-    background: #F1F5F9;
-    border-color: #E2E8F0;
+    background-color: palette(window);
+    border-color: palette(midlight);
+}
+
+/* ----------------------------------------------------------
+   Cards / Containers Modern
+---------------------------------------------------------- */
+QFrame.modernCard, QFrame#cardContainer {
+    background-color: palette(base);
+    border: 1px solid palette(midlight);
+    border-radius: 8px;
 }
