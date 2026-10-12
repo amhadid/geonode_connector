@@ -1,8 +1,6 @@
 # Arsitektur Plugin QGIS GeoNode Connector
 
-Dokumen ini menyajikan dua bagian utama:
-1. **Arsitektur Sistem Plugin GeoNode Connector**: Blueprint struktural menyeluruh dari arsitektur perangkat lunak plugin (Presentation, Controller, Background Workers, Business Service, REST API, Domain Model, Caching, dan Utilitas) termasuk pembaruan Model/View `QTableView`, enkripsi `QgsAuthManager`, GeoPackage (.gpkg) cache, eliminasi dependensi biner `psycopg2` via `QgsDataSourceUri`, dan WFS-T per-user.
-2. **Panduan Penyesuaian Multi-Instance, Delta Sync & Distribusi Multi-Device**: Penjelasan penyelesaian selisih dataset 520 vs 522, migrasi kredensial sensitif ke `QgsAuthManager`, mekanisme *Delta Sync*, manajemen multi-instance dinamis via `QgsSettings`, serta panduan instalasi ke komputer/laptop lain lintas sistem operasi.
+**Arsitektur Sistem Plugin GeoNode Connector**: Blueprint struktural menyeluruh dari arsitektur perangkat lunak plugin (Presentation, Controller, Background Workers, Business Service, REST API, Domain Model, Caching, dan Utilitas) termasuk pembaruan Model/View `QTableView`, enkripsi `QgsAuthManager`, GeoPackage (.gpkg) cache, eliminasi dependensi biner `psycopg2` via `QgsDataSourceUri`, dan WFS-T per-user.
 
 ---
 
